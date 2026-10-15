@@ -1,0 +1,14 @@
+[Unit]
+Description=finance: fotos d'opcions durant la sessió de NY
+
+[Timer]
+# Obertura (passat el soroll inicial), migdia i abans del tancament
+OnCalendar=Mon..Fri *-*-* 10:00:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 12:45:00 America/New_York
+OnCalendar=Mon..Fri *-*-* 15:30:00 America/New_York
+# Una foto perduda no es pot recuperar a posteriori: no té sentit fer-la tard
+Persistent=false
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=finance: manteniment setmanal
+
+[Timer]
+OnCalendar=Sat *-*-* 10:00:00 Europe/Madrid
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target

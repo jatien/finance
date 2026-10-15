@@ -1,0 +1,16 @@
+[Unit]
+Description=finance: pipeline diari (univers, preus, macro, qualitat, compactació)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@FIN_USER@
+Group=@FIN_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+ExecStart=@APP_DIR@/.venv/bin/fin run daily
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+TimeoutStartSec=4h

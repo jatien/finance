@@ -1,0 +1,15 @@
+[Unit]
+Description=finance: foto de cadenes d'opcions
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@FIN_USER@
+Group=@FIN_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+# El job comprova el calendari: en festius surt com a "skipped"
+ExecStart=@APP_DIR@/.venv/bin/fin ingest options
+Nice=5
+TimeoutStartSec=50min

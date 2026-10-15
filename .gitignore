@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Dades i secrets (mai al repositori)
+data/
+finance-data/
+*.parquet
+*.duckdb
+*.duckdb.wal
+.env
+config/local.yaml
+logs/
+
+# Editors
+.vscode/*
+!.vscode/settings.json
+.idea/
+.DS_Store

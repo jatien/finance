@@ -1,0 +1,11 @@
+[Unit]
+Description=finance: còpia de seguretat del data lake
+
+[Service]
+Type=oneshot
+User=@FIN_USER@
+Group=@FIN_USER@
+EnvironmentFile=@ENV_FILE@
+ExecStart=@APP_DIR@/deploy/backup.sh
+Nice=19
+IOSchedulingClass=idle

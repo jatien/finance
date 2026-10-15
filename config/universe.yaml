@@ -1,0 +1,186 @@
+# Univers d'instruments del sistema.
+#
+# - `groups`: conjunts d'instruments amb significat econòmic (sectors, factors...).
+#   Cada símbol pot portar atributs: asset_class, sector, calendar (calendari de borsa).
+#   Un grup pot ser dinàmic (`dynamic: sp500`): es resol amb l'última foto de
+#   `universe_membership` al lake.
+# - `universes`: llistes de grups que consumeix cada job d'ingesta.
+# - `macro`: sèries FRED. `revisable: true` vol dir que el valor d'una data es revisa
+#   amb el temps (ocupació, IPC...) i cal guardar-ne els vintages per evitar look-ahead.
+
+defaults:
+  calendar: XNYS
+  history_start: "1990-01-01"
+
+groups:
+  benchmarks:
+    asset_class: index
+    symbols:
+      ^GSPC: { name: "S&P 500 Index" }
+      ^NDX: { name: "Nasdaq 100 Index" }
+      ^RUT: { name: "Russell 2000 Index" }
+      ^DJI: { name: "Dow Jones Industrial Average" }
+
+  broad_equity:
+    asset_class: etf_equity
+    symbols:
+      SPY: { name: "S&P 500" }
+      QQQ: { name: "Nasdaq 100" }
+      IWM: { name: "Russell 2000" }
+      DIA: { name: "Dow Jones" }
+      RSP: { name: "S&P 500 equiponderat" }
+      MDY: { name: "S&P MidCap 400" }
+      VTI: { name: "Total US market" }
+
+  sectors:
+    # Els 11 sectors GICS (Select Sector SPDR) — base de la rotació sectorial
+    asset_class: etf_sector
+    symbols:
+      XLK: { sector: "Information Technology" }
+      XLF: { sector: "Financials" }
+      XLV: { sector: "Health Care" }
+      XLY: { sector: "Consumer Discretionary" }
+      XLP: { sector: "Consumer Staples" }
+      XLE: { sector: "Energy" }
+      XLI: { sector: "Industrials" }
+      XLB: { sector: "Materials" }
+      XLU: { sector: "Utilities" }
+      XLRE: { sector: "Real Estate" }
+      XLC: { sector: "Communication Services" }
+
+  industries:
+    # Subindústries: detecten temes en auge abans que el sector sencer
+    asset_class: etf_industry
+    symbols:
+      SMH: { sector: "Information Technology", name: "Semiconductors" }
+      IGV: { sector: "Information Technology", name: "Software" }
+      SKYY: { sector: "Information Technology", name: "Cloud computing" }
+      CIBR: { sector: "Information Technology", name: "Cybersecurity" }
+      XBI: { sector: "Health Care", name: "Biotech (equiponderat)" }
+      IHI: { sector: "Health Care", name: "Medical devices" }
+      KRE: { sector: "Financials", name: "Regional banks" }
+      KBE: { sector: "Financials", name: "Banks" }
+      IAI: { sector: "Financials", name: "Broker-dealers" }
+      ITB: { sector: "Consumer Discretionary", name: "Homebuilders" }
+      XRT: { sector: "Consumer Discretionary", name: "Retail" }
+      XOP: { sector: "Energy", name: "Oil & gas E&P" }
+      OIH: { sector: "Energy", name: "Oil services" }
+      TAN: { sector: "Utilities", name: "Solar" }
+      URA: { sector: "Energy", name: "Uranium" }
+      ITA: { sector: "Industrials", name: "Aerospace & defense" }
+      IYT: { sector: "Industrials", name: "Transportation" }
+      PAVE: { sector: "Industrials", name: "Infrastructure" }
+      XME: { sector: "Materials", name: "Metals & mining" }
+      COPX: { sector: "Materials", name: "Copper miners" }
+      GDX: { sector: "Materials", name: "Gold miners" }
+      BOTZ: { sector: "Information Technology", name: "Robotics & AI" }
+
+  factors:
+    asset_class: etf_factor
+    symbols:
+      MTUM: { name: "Momentum" }
+      QUAL: { name: "Quality" }
+      VLUE: { name: "Value" }
+      USMV: { name: "Min volatility" }
+      SIZE: { name: "Size" }
+      SPHB: { name: "High beta" }
+      SPLV: { name: "Low volatility" }
+      IWF: { name: "Russell 1000 Growth" }
+      IWD: { name: "Russell 1000 Value" }
+
+  international:
+    asset_class: etf_equity
+    symbols:
+      EFA: { name: "Developed ex-US" }
+      EEM: { name: "Emerging markets" }
+      VGK: { name: "Europe" }
+      EWJ: { name: "Japan" }
+      FXI: { name: "China large cap" }
+      INDA: { name: "India" }
+      EWZ: { name: "Brazil" }
+
+  rates_credit:
+    asset_class: etf_fixed_income
+    symbols:
+      SHY: { name: "Treasury 1-3Y" }
+      IEF: { name: "Treasury 7-10Y" }
+      TLT: { name: "Treasury 20Y+" }
+      TIP: { name: "TIPS" }
+      LQD: { name: "IG corporate" }
+      HYG: { name: "High yield" }
+      BIL: { name: "T-bills 1-3M (proxy de cash)" }
+
+  commodities_fx:
+    asset_class: etf_commodity
+    symbols:
+      GLD: { name: "Gold" }
+      SLV: { name: "Silver" }
+      USO: { name: "WTI crude" }
+      DBC: { name: "Commodity basket" }
+      UUP: { name: "US dollar index" }
+
+  volatility:
+    # Estructura temporal de la volatilitat: clau per detectar règims
+    asset_class: vol_index
+    symbols:
+      ^VIX: { name: "VIX 30d" }
+      ^VIX9D: { name: "VIX 9d" }
+      ^VIX3M: { name: "VIX 3M" }
+      ^VIX6M: { name: "VIX 6M" }
+      ^VVIX: { name: "Vol of VIX" }
+      ^SKEW: { name: "CBOE SKEW" }
+      ^MOVE: { name: "ICE BofA MOVE (vol de bons)" }
+
+  sp500:
+    asset_class: stock
+    dynamic: sp500
+
+universes:
+  # Preus diaris: tot
+  prices: [benchmarks, broad_equity, sectors, industries, factors, international,
+           rates_credit, commodities_fx, volatility, sp500]
+  # Metadades (sector/indústria per a accions individuals, categoria per a fons)
+  instruments: [broad_equity, sectors, industries, factors, international,
+                rates_credit, commodities_fx, sp500]
+
+options:
+  # Subjacents dels quals es fan fotos de la cadena sencera.
+  # Els índexs ETF tenen les cadenes més líquides; els sectors permeten skew per sector.
+  underlyings: [SPY, QQQ, IWM, DIA, TLT, GLD, HYG,
+                XLK, XLF, XLV, XLY, XLP, XLE, XLI, XLB, XLU, XLRE, XLC,
+                SMH, XBI, KRE]
+  max_dte_days: 760        # fins a ~2 anys (inclou LEAPS)
+  min_dte_days: 0
+  # Moneyness (strike / spot). null = cadena sencera. Es guarda tot per defecte.
+  moneyness_min: null
+  moneyness_max: null
+
+macro:
+  # Corba de tipus
+  DGS3MO: { name: "Treasury 3M", frequency: D, revisable: false }
+  DGS2: { name: "Treasury 2Y", frequency: D, revisable: false }
+  DGS10: { name: "Treasury 10Y", frequency: D, revisable: false }
+  DGS30: { name: "Treasury 30Y", frequency: D, revisable: false }
+  T10Y2Y: { name: "Spread 10Y-2Y", frequency: D, revisable: false }
+  T10Y3M: { name: "Spread 10Y-3M", frequency: D, revisable: false }
+  DFII10: { name: "TIPS real yield 10Y", frequency: D, revisable: false }
+  T10YIE: { name: "Breakeven inflation 10Y", frequency: D, revisable: false }
+  DFF: { name: "Fed funds effective", frequency: D, revisable: false }
+  # Crèdit i estrès financer
+  BAMLH0A0HYM2: { name: "HY OAS", frequency: D, revisable: false }
+  BAMLC0A0CM: { name: "IG OAS", frequency: D, revisable: false }
+  NFCI: { name: "Chicago Fed financial conditions", frequency: W, revisable: true }
+  STLFSI4: { name: "St. Louis Fed financial stress", frequency: W, revisable: true }
+  VIXCLS: { name: "VIX close (FRED)", frequency: D, revisable: false }
+  # Divises i matèries primeres
+  DTWEXBGS: { name: "Trade-weighted USD broad", frequency: D, revisable: false }
+  DCOILWTICO: { name: "WTI spot", frequency: D, revisable: false }
+  # Cicle econòmic (revisables: vintages imprescindibles)
+  ICSA: { name: "Initial jobless claims", frequency: W, revisable: true }
+  UNRATE: { name: "Unemployment rate", frequency: M, revisable: true }
+  PAYEMS: { name: "Nonfarm payrolls", frequency: M, revisable: true }
+  CPIAUCSL: { name: "CPI all items", frequency: M, revisable: true }
+  INDPRO: { name: "Industrial production", frequency: M, revisable: true }
+  UMCSENT: { name: "UMich consumer sentiment", frequency: M, revisable: true }
+  SAHMREALTIME: { name: "Sahm rule (real-time)", frequency: M, revisable: true }
+  USREC: { name: "NBER recession indicator", frequency: M, revisable: true }

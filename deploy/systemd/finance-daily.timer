@@ -1,0 +1,13 @@
+[Unit]
+Description=finance: pipeline diari després del tancament de NY
+
+[Timer]
+# 21:15 hora de Nova York (03:15 a Madrid). Just després del tancament Yahoo publica
+# barres provisionals (open > high, volum incomplet) que corregeix al vespre.
+OnCalendar=Mon..Fri *-*-* 21:15:00 America/New_York
+# Si l'ordinador estava apagat, s'executa en engegar-se
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target
