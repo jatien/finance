@@ -5,13 +5,13 @@ bull/bear), sectores en auge, y sugerencias de entrada, ampliación y reducción
 en fondos, acciones y opciones.
 
 El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture.md)).
-**Fase actual: capa de features (2).**
+**Fase actual: capa de regímenes (3).**
 
 | Capa | Estado |
 |---|---|
 | 1. Datos: ingesta, data lake Parquet/DuckDB, opciones, macro, calidad, registro de ejecuciones | ✅ |
 | 2. Features: tendencia, volatilidad, amplitud, crédito, correlación, panel sectorial ([docs](docs/features.md)) | ✅ |
-| 3. Regímenes: bull/bear, volatilidad, estrés de crédito | — |
+| 3. Regímenes: tendencia × volatilidad + crisis, exposición recomendada y validación ([docs](docs/regimes.md)) | ✅ |
 | 4. Señales: rotación sectorial, timing de entrada/salida | — |
 | 5. Cartera: asignación por régimen, riesgo, estrategias con opciones | — |
 | 6. Alertas / ejecución | — |
@@ -53,6 +53,9 @@ uv run fin ingest options --force                  # foto de opciones (fuera de 
 uv run fin features build                          # capa 2: features de mercado y sectoriales
 uv run fin features show                           # estado actual del mercado
 uv run fin features report                         # informe HTML (uv sync --extra viz)
+uv run fin regimes build                           # capa 3: régimen de cada sesión
+uv run fin regimes show                            # régimen actual y exposición recomendada
+uv run fin regimes report                          # validación: backtest, ablaciones, sensibilidad
 uv run fin status
 uv run fin sql "SELECT * FROM prices_coverage ORDER BY last_date LIMIT 10"
 uv run pytest
@@ -96,6 +99,7 @@ src/finance/           código (comentarios en catalán)
   ingest/              jobs de ingesta
   quality/             controles de calidad
   features/            capa 2: features point-in-time (mercado + panel sectorial)
+  regimes/             capa 3: regímenes por reglas, exposición y validación
 tests/                 pytest con proveedores simulados (sin red)
 deploy/                bootstrap del servidor, unidades systemd, backup
 docs/                  arquitectura y operación

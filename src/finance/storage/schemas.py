@@ -379,12 +379,42 @@ SECTOR_FEATURES_DAILY = DatasetSpec(
     snapshot_by=("feature_set",),
 )
 
+# ---------------------------------------------------------------------------------------
+# Capa 3: règims
+# ---------------------------------------------------------------------------------------
+
+REGIMES_DAILY = DatasetSpec(
+    name="regimes_daily",
+    path="regimes/daily",
+    description=(
+        "Règim de mercat diari (bull/bear × calma/volàtil + crisi) i exposició a renda "
+        "variable recomanada. Decidit al tancament de `date`; s'aplica a partir de la sessió "
+        "següent. `action` = add | reduce | hold respecte del dia anterior."
+    ),
+    fields=[
+        pa.field("regime_set", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("regime", pa.string(), nullable=False),
+        pa.field("trend", pa.string()),
+        pa.field("vol", pa.string()),
+        pa.field("crisis", pa.bool_()),
+        pa.field("equity_exposure", pa.float64(), nullable=False),
+        pa.field("days_in_regime", pa.int32()),
+        pa.field("action", pa.string()),
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("regime_set", "date"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("regime_set", "date"),
+    snapshot_by=("regime_set",),
+)
+
 REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
         PRICES_DAILY, CORPORATE_ACTIONS, OPTION_SNAPSHOTS, MACRO_OBSERVATIONS,
         UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
-        DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY,
+        DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY, REGIMES_DAILY,
     )
 }
 
