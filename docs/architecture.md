@@ -10,7 +10,7 @@ con ellas a través del lake (datos versionados) y del registro de ejecuciones.
 │ 6. Ejecución / alertas     órdenes sugeridas: entrar, añadir, reducir, cubrir │  (futuro)
 │ 5. Cartera                 asignación por régimen, límites de riesgo, opciones │  (futuro)
 │ 4. Señales                 rotación sectorial, momentum, timing de entrada     │  (futuro)
-│ 3. Regímenes               bull/bear, volatilidad, estrés de crédito           │  (futuro)
+│ 3. Regímenes               tendencia × volatilidad + crisis → exposición        │  ✅
 │ 2. Features                tendencia, vol, amplitud, crédito, correlación      │  ✅
 ├────────────────────────────────────────────────────────────────────────────┤
 │ 1. Datos                                                                     │
@@ -121,7 +121,10 @@ ejecución queda como `partial` con el error registrado.
 | `features_daily` | feature_set, feature, date | year | features de mercado + percentil expansivo; se regenera entera |
 | `sector_features_daily` | feature_set, symbol, feature, date | year | panel sectorial + percentil transversal; se regenera entero |
 
-La capa de features se describe en [features.md](features.md).
+| `regimes_daily` | regime_set, date | year | régimen, exposición recomendada y acción (add/reduce/hold); se regenera entero |
+
+La capa de features se describe en [features.md](features.md) y la de regímenes en
+[regimes.md](regimes.md).
 
 ## Universo
 

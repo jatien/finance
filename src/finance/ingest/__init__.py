@@ -16,12 +16,14 @@ from finance.ingest.reference import InstrumentsJob, UniverseJob
 from finance.ingest.universe_history import UniverseHistoryJob
 from finance.jobs import Context, Job, RunReport
 from finance.quality.checks import QualityJob
+from finance.regimes.job import RegimesJob
 
 log = logging.getLogger(__name__)
 
 JOBS: dict[str, type[Job]] = {
     j.name: j for j in (PricesJob, OptionsJob, MacroJob, UniverseJob, UniverseHistoryJob,
-                        InstrumentsJob, QualityJob, CompactJob, FeaturesJob)
+                        InstrumentsJob, QualityJob, CompactJob, FeaturesJob,
+                        RegimesJob)
 }
 
 UNIVERSE_MAX_AGE = timedelta(days=7)
@@ -41,7 +43,7 @@ def universe_is_stale(ctx: Context) -> bool:
 
 
 def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
-    """Pipeline de tancament: univers (si cal) → preus → macro → qualitat → features → compactació."""
+    """Pipeline de tancament: univers (si cal) → preus → macro → qualitat → features → règims → compactació."""
     reports = []
     if universe_is_stale(ctx):
         reports.append(run_job(ctx, "universe", refresh_catalog=False))
@@ -51,6 +53,7 @@ def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
     reports.append(run_job(ctx, "dq", refresh_catalog=False))
     # Les features llegeixen el lake a través del catàleg en memòria (sempre al dia)
     reports.append(run_job(ctx, "features", refresh_catalog=False))
+    reports.append(run_job(ctx, "regimes", refresh_catalog=False))
     reports.append(run_job(ctx, "compact", min_files=8))
     return reports
 

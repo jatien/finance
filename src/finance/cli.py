@@ -11,6 +11,9 @@ Exemples:
     fin features build               # recalcula les features (capa 2) i les escriu al lake
     fin features show                # estat actual del mercat segons les features
     fin features report              # informe HTML: correlació de Spearman, cobertura, sèries
+    fin regimes build                # classifica el règim de mercat de cada sessió (capa 3)
+    fin regimes show                 # règim actual, exposició recomanada i últims canvis
+    fin regimes report               # informe HTML de validació (estadístiques, backtest, sensibilitat)
     fin status                       # estat del lake i dels últims jobs
     fin sql "SELECT * FROM job_status"
 """
@@ -36,6 +39,8 @@ app.add_typer(ingest_app, name="ingest")
 features_app = typer.Typer(no_args_is_help=True, help="Capa 2: features de mercat i sectorials")
 app.add_typer(run_app, name="run")
 app.add_typer(features_app, name="features")
+regimes_app = typer.Typer(no_args_is_help=True, help="Capa 3: règims de mercat")
+app.add_typer(regimes_app, name="regimes")
 console = Console()
 
 Symbols = Annotated[list[str] | None, typer.Option("--symbol", "-s", help="Símbol (repetible)")]
@@ -214,6 +219,53 @@ def features_report(
     notes = [] if msg.empty or not msg["message"].iloc[0] else msg["message"].iloc[0].split("; ")[1:]
     path = Path(out) if out else ctx.settings.data_dir / "reports" / f"features_{feature_set}.html"
     build_report(feats, pct, path, feature_set=feature_set, notes=notes)
+    console.print(str(path))
+
+
+@regimes_app.command("build")
+def regimes_build() -> None:
+    """Classifica cada sessió (tendència × volatilitat + crisi) i ho escriu al lake."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "regimes"))
+
+
+@regimes_app.command("show")
+def regimes_show(regime_set: str = typer.Option("rules_v1", "--set")) -> None:
+    """Règim actual, exposició recomanada i últims canvis de règim."""
+    from finance.regimes.evaluation import episodes
+    from finance.regimes.job import read_regimes
+    ctx = _ctx()
+    reg = read_regimes(ctx, regime_set)
+    if reg.empty:
+        console.print("[yellow]sense règims: executa `fin regimes build`[/yellow]")
+        raise typer.Exit(1)
+    last = reg.iloc[-1]
+    console.print(f"[bold]{reg.index[-1]:%Y-%m-%d}[/bold]  règim [bold]{last['regime']}[/bold] "
+                  f"(tendència {last['trend']}, volatilitat {last['vol']}, crisi {bool(last['crisis'])}) · "
+                  f"{int(last['days_in_regime'])} sessions · exposició recomanada "
+                  f"[bold]{last['equity_exposure']:.0%}[/bold] · acció: {last['action']}")
+    ep = episodes(reg["regime"]).tail(10).iloc[::-1]
+    ep["start"] = ep["start"].dt.date
+    ep["end"] = ep["end"].dt.date
+    ep["exposure"] = ep["regime"].map(reg.groupby("regime")["equity_exposure"].first())
+    _print_df(ep, "Últims episodis")
+
+
+@regimes_app.command("report")
+def regimes_report(
+    out: str | None = typer.Option(None, help="Fitxer HTML de sortida"),
+    cost_bps: float = typer.Option(5.0, help="Cost per unitat de rotació (punts bàsics)"),
+) -> None:
+    """Informe de validació: estadístiques per règim, backtest, ablacions i sensibilitat."""
+    from pathlib import Path
+
+    from finance.regimes.config import RegimeConfig
+    from finance.regimes.job import load_eval_inputs
+    from finance.regimes.report import build_report
+    ctx = _ctx()
+    cfg = RegimeConfig()
+    path = Path(out) if out else ctx.settings.data_dir / "reports" / f"regimes_{cfg.name}.html"
+    build_report(load_eval_inputs(ctx, cfg), cfg, path, cost_bps)
     console.print(str(path))
 
 
