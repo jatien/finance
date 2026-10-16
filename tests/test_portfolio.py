@@ -11,7 +11,11 @@ from finance.features.sectors import compute_group_panel
 from finance.portfolio import CASH, PortfolioConfig, PortfolioInputs, Targets, build_targets
 from finance.portfolio import evaluation as ev
 from finance.portfolio.backtest import simulate
+from finance.portfolio.config import ACTIVE, ROT_V1, ROT_V2, SleeveRule
 from finance.portfolio.construct import (
+    PANEL_FEATURES,
+    absolute_momentum_ok,
+    equity_weights,
     fixed_targets,
     hedge_weights,
     review_dates,
@@ -60,20 +64,23 @@ def inp() -> PortfolioInputs:
     regime.loc[regime["regime"].isna(), "trend"] = None
     sb = pd.Series(np.where(np.arange(N) < 1000, -0.3, 0.3), index=idx, dtype=float)
     sb.iloc[:300] = np.nan
+    fast =pd.Series(np.where(np.arange(N) < 980, -0.2, 0.4), index=idx, dtype=float)
+    fast.iloc[:280] = np.nan
     return PortfolioInputs(prices=prices, cash_ret=pd.Series(0.0001, index=idx), regime=regime,
-                           panel={k: panel[k] for k in ("risk_adj_mom", "rel_strength_6m", "vol_3m", "beta_1y")},
-                           stock_bond_corr=sb, sectors=SECTORS)
+                           panel={k: panel[k] for k in PANEL_FEATURES},
+                           stock_bond_corr=sb, sectors=SECTORS, stock_bond_corr_fast={21: fast})
 
 
 # ---------------------------------------------------------------------------------------
 # Causalitat
 # ---------------------------------------------------------------------------------------
 
-def test_targets_truncation_invariant(inp):
-    full = build_targets(inp)
-    for cut in (420, 640, 701, 1001, N - 1):
+@pytest.mark.parametrize("cfg", [ROT_V1, ROT_V2], ids=lambda c: c.name)
+def test_targets_truncation_invariant(inp, cfg):
+    full = build_targets(inp, cfg)
+    for cut in (420, 640, 701, 985, 1001, N - 1):
         t = inp.index[cut]
-        part = build_targets(inp.truncate(t))
+        part = build_targets(inp.truncate(t), cfg)
         pd.testing.assert_frame_equal(part.weights, full.weights.loc[:t])
         pd.testing.assert_series_equal(part.reviews, full.reviews.loc[:t])
         pd.testing.assert_frame_equal(part.log, full.log.loc[:t])
@@ -265,7 +272,108 @@ def test_portfolio_job_end_to_end(tmp_path, providers, clock):
         r = run_job(ctx, job)
         assert r.status == "success", (job, r.errors, r.message)
     df = read_targets(ctx)
-    assert not df.empty
+    assert not df.empty and set(df["strategy_set"]) == {"rot_v1"}
+    v2 = read_targets(ctx, "rot_v2")
+    assert not v2.empty and (v2.loc[v2["symbol"] == "SPY", "sleeve"] == "nucli").all()
     last = df[df["date"] == df["date"].max()]
     assert last["target_weight"].sum() == pytest.approx(1.0)
     assert set(df["action"]) <= {"enter", "add", "reduce", "exit", "hold"}
+
+
+# ---------------------------------------------------------------------------------------
+# rot_v2: construcció condicionada al règim
+# ---------------------------------------------------------------------------------------
+
+def test_rule_for_playbook_and_v1_fallback():
+    assert ROT_V1.rule_for("bear_calm", "bear").score == "risk_adj_low_beta"
+    assert ROT_V1.rule_for("bull_calm", "bull") == SleeveRule()
+    assert ROT_V1.variant(defensive_tilt=False).rule_for("bear_calm", "bear").score == "risk_adj"
+    bull = ROT_V2.rule_for("bull_volatile", "bull")
+    assert (bull.core_share, bull.score, bull.abs_mom_filter) == (0.70, "trend", True)
+    assert ROT_V2.rule_for("bear_volatile", "bear").core_share == 0.50
+    # Un règim concret té prioritat sobre la tendència
+    special = SleeveRule(core_share=1.0)
+    cfg = ROT_V2.variant(playbook={**dict(ROT_V2.playbook), "bull_volatile": special})
+    assert cfg.rule_for("bull_volatile", "bull") is special
+    assert cfg.rule_for("bull_calm", "bull") == bull
+    with pytest.raises(KeyError):
+        ROT_V2.variant(playbook=(("bull", bull),)).rule_for("bear_calm", "bear")
+    with pytest.raises(ValueError):
+        SleeveRule(score="xyz")
+    assert ROT_V2.to_params()["playbook"]["bull"]["core_share"] == 0.70
+    assert [c.name for c in ACTIVE] == ["rot_v1", "rot_v2"]
+
+
+def test_equity_weights_core_and_empty_slots():
+    vol = pd.Series({"A": 0.1, "B": 0.2, "C": 0.2})
+    rule = SleeveRule(core_share=0.7)
+    w = equity_weights(["A", "B", "C"], vol, rule, ROT_V2)
+    assert sum(w.values()) == pytest.approx(1.0)
+    assert w["SPY"] == pytest.approx(0.7)
+    assert w["A"] == pytest.approx(0.3 * 0.5)  # vol inversa: 10 / (10 + 5 + 5)
+    # Una plaça buida (filtre absolut): 1/3 del satèl·lit passa al nucli
+    w2 = equity_weights(["A", "B"], vol, rule, ROT_V2)
+    assert w2["SPY"] == pytest.approx(0.8) and sum(w2.values()) == pytest.approx(1.0)
+    assert equity_weights([], vol, rule, ROT_V2) == {"SPY": 1.0}
+    assert "SPY" not in equity_weights(["A", "B", "C"], vol, SleeveRule(), ROT_V1)
+
+
+def test_trend_score_ignores_volatility(inp):
+    t = inp.index[1100]
+    trend = sector_scores(inp.panel, t, False, ROT_V2, SleeveRule(score="trend"))
+    rs = inp.panel["rel_strength_6m"].loc[t][trend.index].rank(pct=True)
+    expected = inp.panel["mom_12_1"].loc[t][trend.index].rank(pct=True) + ROT_V2.rs_weight * rs
+    pd.testing.assert_series_equal(trend, expected.sort_values(ascending=False, kind="stable"), check_names=False)
+
+
+def test_absolute_momentum_filter_sends_slots_to_core(inp):
+    t = inp.index[1100]
+    scores = sector_scores(inp.panel, t, False, ROT_V2, ROT_V2.rule_for("bull_calm", "bull"))
+    mom = inp.panel["mom_12_1"].loc[t]
+    kept = absolute_momentum_ok(scores, inp.panel, t)
+    assert list(kept.index) == [s for s in scores.index if mom[s] > 0]
+    # Tots els sectors amb momentum negatiu → tot el bloc de renda variable al mercat
+    neg = {k: v.copy() for k, v in inp.panel.items()}
+    neg["mom_12_1"].loc[:, :] = -0.1
+    tg = build_targets(PortfolioInputs(**{**inp.__dict__, "panel": neg}), ROT_V2)
+    w = tg.weights.loc[inp.index[1100]]
+    e = inp.regime["equity_exposure"].iloc[1100]
+    assert w["SPY"] == pytest.approx(e) and w[SECTORS].sum() == pytest.approx(0.0)
+
+
+def test_v2_targets_by_regime(inp):
+    tg = build_targets(inp, ROT_V2)
+    w = tg.weights.dropna()
+    assert np.allclose(w.sum(axis=1), 1.0)
+    e = inp.regime["equity_exposure"].reindex(w.index)
+    assert np.allclose(w[[*SECTORS, "SPY"]].sum(axis=1), e)
+    lg = tg.log
+    bull = lg[lg["regime"].isin(["bull_calm", "bull_volatile"])]
+    bear = lg[lg["regime"] == "bear_volatile"]
+    assert (bull["core_share"] >= 0.70 - 1e-12).all() and (bull["score"] == "trend").all()
+    assert np.allclose(bear["core_share"], 0.50) and (bear["score"] == "risk_adj_low_beta").all()
+    assert w.loc[inp.index[650], "SPY"] == pytest.approx(0.25 * 0.5)  # bear_volatile: E = 25 %
+    assert w.loc[inp.index[720], [*SECTORS, "SPY"]].sum() == 0  # crisi
+
+
+def test_fast_hedge_confirmation():
+    cfg = ROT_V2
+    # 3 mesos negativa però 1 mes positiva → no hi ha bons (cas 2022)
+    assert hedge_weights(-0.2, {"IEF", "GLD"}, cfg, 0.3) == ({"GLD": 0.5, CASH: 0.5}, "or+cash")
+    assert hedge_weights(-0.2, {"IEF", "GLD"}, cfg, -0.1) == ({"IEF": 1.0}, "bons")
+    assert hedge_weights(-0.2, {"IEF", "GLD"}, cfg, np.nan) == ({"IEF": 1.0}, "bons")
+    # rot_v1 ignora la correlació ràpida
+    assert hedge_weights(-0.2, {"IEF", "GLD"}, ROT_V1, 0.3) == ({"IEF": 1.0}, "bons")
+
+
+def test_v2_comparison_and_ablations(inp):
+    res = ev.v2_comparison(inp, ROT_V1, ROT_V2)
+    assert {ev.V1, ev.V2, "v2 sense condicionar"} <= set(res["sims"])
+    full = res["tables"]["Completa"].set_index("estrategia")
+    assert full["CAGR_%"].notna().all()
+    v = res["verdict"].set_index("finestra")["passa"]
+    assert list(v.index) == ["Disseny 2000–2015", "Comprovació 2016–"]
+    assert v["Disseny 2000–2015"] in (True, False) and v["Comprovació 2016–"] is None  # dades sintètiques fins al 2014
+    # "Sense condicionar" fa servir la regla alcista també en tendència baixista
+    lg = res["targets"]["v2 sense condicionar"].log
+    assert (lg.loc[lg["regime"] == "bear_volatile", "score"] == "trend").all()

@@ -9,10 +9,10 @@ import pandas as pd
 
 from finance.features.config import FeatureConfig
 from finance.features.inputs import load_prices
-from finance.features.transforms import rolling_corr
 from finance.features.job import read_market_features, read_sector_features
+from finance.features.transforms import rolling_corr
 from finance.jobs import Job, Run
-from finance.portfolio.config import CASH, PortfolioConfig
+from finance.portfolio.config import ACTIVE, CASH, PortfolioConfig
 from finance.portfolio.construct import PANEL_FEATURES, PortfolioInputs, Targets, build_targets
 from finance.regimes.job import cash_returns, read_regimes
 from finance.storage.schemas import PORTFOLIO_TARGETS
@@ -98,26 +98,39 @@ def decision_log(t: Targets, cfg: PortfolioConfig) -> pd.DataFrame:
 
 
 class PortfolioJob(Job):
+    """Escriu al registre de decisions totes les estratègies actives (paper trading en paral·lel)."""
+
     name = "portfolio"
 
-    def execute(self, run: Run, **_: Any) -> None:
-        cfg = PortfolioConfig()
-        run.params["portfolio_config"] = cfg.to_params()
-        inp = load_inputs(self.ctx, cfg)
-        t = build_targets(inp, cfg)
-        log = decision_log(t, cfg)
-        if log.empty:
-            run.skip("sense cartera: cal un any de momentum sectorial i règims definits")
+    def execute(self, run: Run, strategies: list[str] | None = None, **_: Any) -> None:
+        cfgs = [c for c in ACTIVE if strategies is None or c.name in strategies]
+        if not cfgs:
+            raise ValueError(f"cap estratègia activa coincideix amb {strategies}")
+        run.params["portfolio_configs"] = {c.name: c.to_params() for c in cfgs}
+        msgs: list[str] = []
+        written = 0
+        for cfg in cfgs:
+            inp = load_inputs(self.ctx, cfg)
+            log = decision_log(build_targets(inp, cfg), cfg)
+            if log.empty:
+                msgs.append(f"{cfg.name}: sense cartera (cal un any de momentum sectorial i règims)")
+                continue
+            run.write(PORTFOLIO_TARGETS, log, f"portfolio:{cfg.name}")
+            written += 1
+            last = log[log["date"] == log["date"].max()]
+            alloc = ", ".join(f"{r.symbol} {r.target_weight:.0%}" for r in
+                              last[last["target_weight"] > 0].sort_values("target_weight", ascending=False).itertuples())
+            msgs.append(f"{cfg.name} {last['date'].max():%Y-%m-%d}: {alloc}")
+            msgs.extend(n for n in inp.notes if n not in msgs)
+        if not written:
+            run.skip("; ".join(msgs))
             return
-        run.write(PORTFOLIO_TARGETS, log, f"portfolio:{cfg.name}")
         run.ok()
-        last = log[log["date"] == log["date"].max()]
-        alloc = ", ".join(f"{r.symbol} {r.target_weight:.0%}" for r in
-                          last[last["target_weight"] > 0].sort_values("target_weight", ascending=False).itertuples())
-        run.message = "; ".join([f"{cfg.name} {last['date'].max():%Y-%m-%d}: {alloc}", *inp.notes])
+        run.message = "; ".join(msgs)
 
 
-def read_targets(ctx, strategy_set: str = "rot_v1") -> pd.DataFrame:
+def read_targets(ctx, strategy_set: str | None = None) -> pd.DataFrame:
+    strategy_set = strategy_set or ACTIVE[0].name
     df = ctx.query("SELECT * EXCLUDE (source, ingested_at, run_id, year) FROM portfolio_targets "
                    "WHERE strategy_set = ? ORDER BY date, target_weight DESC", [strategy_set])
     if not df.empty:

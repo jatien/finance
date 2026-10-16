@@ -140,6 +140,8 @@ ROT_V2 = PortfolioConfig(
 ROT_V1 = PortfolioConfig()
 
 # Estratègies que el job `portfolio` escriu cada dia al registre de decisions (paper trading).
-# La primera és la de referència per a `fin portfolio show` i l'informe.
-ACTIVE: tuple[PortfolioConfig, ...] = (ROT_V2, ROT_V1)
+# La primera és la de referència per a `fin portfolio show`. rot_v2 no va passar el criteri
+# pre-registrat (caiguda màxima > 3 punts pitjor a les dues finestres): rot_v1 continua sent
+# la referència i rot_v2 es registra en paral·lel com a fora de mostra.
+ACTIVE: tuple[PortfolioConfig, ...] = (ROT_V1, ROT_V2)
 STRATEGIES: dict[str, PortfolioConfig] = {c.name: c for c in ACTIVE}

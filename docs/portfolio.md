@@ -5,12 +5,14 @@ GICS (*dónde* ponerlo) y una cartera de cobertura para la parte que no va a ren
 Cada revisión queda en un registro de decisiones con las acciones sugeridas.
 
 ```bash
-uv run fin portfolio build       # cartera objetivo + registro de decisiones (`portfolio_targets`)
-uv run fin portfolio show        # cartera actual y últimos cambios sugeridos
+uv run fin portfolio build       # estrategias activas (rot_v1, rot_v2) → registro de decisiones (`portfolio_targets`)
+uv run fin portfolio show        # cartera actual y últimos cambios (por defecto rot_v1; --set rot_v2)
 uv run fin portfolio report      # walk-forward contra referencias, ablaciones y sensibilidad (~1 min)
 ```
 
-`fin run daily` ejecuta `portfolio` después de `regimes`.
+`fin run daily` ejecuta `portfolio` después de `regimes`. Escribe todas las estrategias de
+`ACTIVE` (`portfolio/config.py`) con su `strategy_set`: es el paper trading en paralelo. Los
+bloques de `sleeve` son `renda_variable`, `nucli` (SPY en `rot_v2`), `cobertura` y `cash`.
 
 ## Cómo se construye (`rot_v1`)
 
@@ -143,3 +145,56 @@ objetivo_t = E_t · [c_r · SPY + (1 − c_r) · satélite_r] + (1 − E_t) · c
    máxima en más de 3 puntos, en las dos ventanas. Si no, se registra como resultado
    negativo y las dos estrategias siguen en paper trading.
 5. Las dos (`rot_v1` y `rot_v2`) se escriben cada día en `portfolio_targets` desde ya.
+
+### Resultados (una sola ejecución, 16-oct-2026)
+
+| Estrategia | Completa: CAGR / Sharpe / máx. caída | 2000–2015 | 2016–2026 | Rotación/año |
+|---|---|---|---|---|
+| SPY buy & hold | 8,3 % / 0,41 / −55,2 % | 4,1 % / 0,21 / −55,2 % | 15,0 % / 0,75 / −33,7 % | 0 |
+| Regímenes sobre SPY | 7,3 % / 0,51 / −25,6 % | 4,7 % / 0,32 / −25,6 % | 11,4 % / 0,79 / −21,4 % | 1,7 |
+| `rot_v1` | 6,6 % / 0,44 / **−22,6 %** | 6,1 % / 0,44 / **−15,7 %** | 7,3 % / 0,45 / −22,6 % | 8,6 |
+| **`rot_v2`** | **8,2 % / 0,57** / −26,0 % | 6,3 % / 0,45 / −21,4 % | 10,9 % / 0,75 / −26,0 % | **5,2** |
+| v2 sin núcleo | 7,8 % / 0,52 / −19,8 % | 7,1 % / 0,50 / −15,7 % | 8,9 % / 0,56 / −19,8 % | 9,1 |
+| v2 sin filtro absoluto | 8,0 % / 0,56 / −26,0 % | 6,2 % / 0,44 / −21,4 % | 10,7 % / 0,73 / −26,0 % | 5,1 |
+| v2 con puntuación v1 en alcista | 8,0 % / 0,56 / −26,8 % | 6,2 % / 0,44 / −21,4 % | 10,7 % / 0,73 / −26,8 % | 5,0 |
+| v2 con cobertura v1 | 8,2 % / 0,57 / −26,0 % | 6,3 % / 0,45 / −21,4 % | 10,9 % / 0,75 / −26,0 % | 5,1 |
+| **v2 sin condicionar** | 8,1 % / 0,57 / −26,2 % | 6,3 % / 0,44 / −22,9 % | 10,9 % / 0,74 / −26,2 % | 5,1 |
+
+Episodios: punto com −20,3 % (`rot_v1` −13,6 %), crisis financiera +1,2 % (+5,7 %), recuperación
+2020 +12,8 % (+7,5 %), inflación 2022 −25,4 % (−21,2 %).
+
+**Veredicto del criterio pre-registrado: no pasa.** El Sharpe mejora en las dos ventanas
+(0,44 → 0,45 y 0,45 → 0,75), pero la caída máxima empeora 5,7 puntos en 2000–2015 y 3,4 en
+2016–2026. `rot_v1` sigue como referencia; las dos se registran cada día.
+
+### Lectura honesta
+
+1. **Condicionar la construcción al régimen no aporta nada.** "Sin condicionar" (la regla
+   alcista también en tendencia bajista) da prácticamente lo mismo que `rot_v2` (Sharpe 0,57
+   en ambas). Era la pregunta de la semana y la respuesta es no: el régimen sirve para decidir
+   *cuánto* riesgo (E), no *cómo* repartirlo. Encaja con que en estrés las correlaciones
+   sectoriales suben a 0,80: en bajista y crisis hay poco que elegir.
+2. **La mejora de `rot_v2` viene casi entera del núcleo de SPY**, es decir, de hacer *menos*
+   selección de sectores. Es la tercera vez que aparece lo mismo (v. lectura de `rot_v1`).
+   El coste es la caída: con un 70 % en SPY, el sistema hereda más del mercado en las caídas
+   rápidas que arrancan en tendencia alcista (2000, 2022).
+3. **El filtro de momentum absoluto y el cambio de puntuación aportan poco** (+0,1–0,2 puntos
+   de CAGR cada uno), aunque la puntuación sin dividir por la volatilidad sí elimina el sesgo
+   defensivo que tenía `rot_v1` en 2010–2026.
+4. **La confirmación rápida de la cobertura no cambia nada, y el diagnóstico explica por qué.**
+   Entre enero y marzo de 2022 la correlación SPY–TLT era negativa a 1 y a 3 meses (−0,05 a
+   −0,33) mientras los bonos caían con fuerza: el 23-feb el sistema entra en crisis con un
+   100 % en IEF. El problema no era la velocidad de la correlación sino la señal: el signo
+   de la correlación no dice si los bonos van a subir. Hace falta una condición sobre el
+   propio activo de cobertura.
+5. **"Sin núcleo" es la variante con mejor Calmar y menor caída** (−19,8 %). Se ha visto
+   mirando los resultados, así que solo es una hipótesis.
+
+### Hipótesis para `rot_v3` (no implementadas)
+
+- Cobertura con **filtro de tendencia del propio bono** (IEF sobre su SMA200 o momentum de 6 m
+  > 0) en lugar de, o además de, la correlación.
+- Núcleo **dependiente de la volatilidad** en lugar del régimen: más satélite cuando la
+  dispersión entre sectores es alta, más SPY cuando es baja.
+- Probar "sin núcleo" con la puntuación de tendencia en una muestra que no se haya usado:
+  industrias (SMH, IGV...) en lugar de sectores, o el tramo de paper trading.
