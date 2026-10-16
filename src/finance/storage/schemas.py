@@ -409,12 +409,44 @@ REGIMES_DAILY = DatasetSpec(
     snapshot_by=("regime_set",),
 )
 
+# ---------------------------------------------------------------------------------------
+# Capes 4-5: rotació i cartera objectiu (registre de decisions)
+# ---------------------------------------------------------------------------------------
+
+PORTFOLIO_TARGETS = DatasetSpec(
+    name="portfolio_targets",
+    path="portfolio/targets",
+    description=(
+        "Registre de decisions: cartera objectiu a cada data de revisió (inici de mes i canvis "
+        "de règim). Decidida al tancament de `date`. `action` compara amb l'objectiu de la "
+        "revisió anterior: enter | add | reduce | exit | hold."
+    ),
+    fields=[
+        pa.field("strategy_set", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("sleeve", pa.string(), nullable=False),  # renda_variable | cobertura | cash
+        pa.field("target_weight", pa.float64(), nullable=False),
+        pa.field("prev_weight", pa.float64(), nullable=False),
+        pa.field("change", pa.float64(), nullable=False),
+        pa.field("action", pa.string(), nullable=False),
+        pa.field("regime", pa.string()),
+        pa.field("equity_exposure", pa.float64()),
+        pa.field("hedge", pa.string()),
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("strategy_set", "date", "symbol"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("strategy_set", "date", "symbol"),
+    snapshot_by=("strategy_set",),
+)
+
 REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
         PRICES_DAILY, CORPORATE_ACTIONS, OPTION_SNAPSHOTS, MACRO_OBSERVATIONS,
         UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
-        DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY, REGIMES_DAILY,
+        DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY, REGIMES_DAILY, PORTFOLIO_TARGETS,
     )
 }
 

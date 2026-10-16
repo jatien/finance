@@ -83,7 +83,7 @@ Después:
 | Timer | Cuándo | Qué hace |
 |---|---|---|
 | `finance-options` | L–V 10:00, 12:45, 15:30 (hora NY) | Foto de cadenas de opciones completas |
-| `finance-daily` | L–V 21:15 (hora NY; 03:15 en Madrid) | Universo si tiene >7 días → precios → macro → calidad → compactación |
+| `finance-daily` | L–V 21:15 (hora NY; 03:15 en Madrid) | Universo si tiene >7 días → precios → macro → calidad → features → regímenes → cartera → compactación |
 | `finance-weekly` | Sábado 10:00 (Madrid) | Universo S&P 500, historial de composición, metadatos, compactación completa |
 | `finance-backup` | Diario 05:30 (Madrid), tras el pipeline diario | Copia del lake (si hay destino configurado) |
 
