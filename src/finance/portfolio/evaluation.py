@@ -297,8 +297,7 @@ def bands_verdict(tables: dict[str, pd.DataFrame], base: str, banded: str,
              "reduccio_rotacio_%": 100 * cut, "passa": bool(cut >= min_turnover_cut)}]
     for label in [w[0] for w in V2_WINDOWS[1:]]:
         t = tables[label].set_index("estrategia")
-        vals = t.loc[[base, banded], ["sharpe", "max_dd_%"]]
-        if vals.isna().any().any():
+        if "sharpe" not in t or t.loc[[base, banded], ["sharpe", "max_dd_%"]].isna().any().any():
             rows.append({"parella": f"{base} → {banded}", "finestra": label, "passa": None})
             continue
         d_sh = t.at[banded, "sharpe"] - t.at[base, "sharpe"]

@@ -10,8 +10,8 @@ from finance.features import FeatureConfig
 from finance.features.sectors import compute_group_panel
 from finance.portfolio import CASH, PortfolioConfig, PortfolioInputs, Targets, build_targets
 from finance.portfolio import evaluation as ev
-from finance.portfolio.backtest import simulate
-from finance.portfolio.config import ACTIVE, ROT_V1, ROT_V2, SleeveRule
+from finance.portfolio.backtest import rolling_cov, simulate, simulate_cfg
+from finance.portfolio.config import ACTIVE, ROT_V1, ROT_V1B, ROT_V2, ROT_V2B, SleeveRule
 from finance.portfolio.construct import (
     PANEL_FEATURES,
     absolute_momentum_ok,
@@ -75,7 +75,7 @@ def inp() -> PortfolioInputs:
 # Causalitat
 # ---------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("cfg", [ROT_V1, ROT_V2], ids=lambda c: c.name)
+@pytest.mark.parametrize("cfg", [ROT_V1, ROT_V2, ROT_V1B, ROT_V2B], ids=lambda c: c.name)
 def test_targets_truncation_invariant(inp, cfg):
     full = build_targets(inp, cfg)
     for cut in (420, 640, 701, 985, 1001, N - 1):
@@ -272,7 +272,7 @@ def test_portfolio_job_end_to_end(tmp_path, providers, clock):
         r = run_job(ctx, job)
         assert r.status == "success", (job, r.errors, r.message)
     df = read_targets(ctx)
-    assert not df.empty and set(df["strategy_set"]) == {"rot_v1"}
+    assert not df.empty and set(df["strategy_set"]) == {"rot_v1b"}
     v2 = read_targets(ctx, "rot_v2")
     assert not v2.empty and (v2.loc[v2["symbol"] == "SPY", "sleeve"] == "nucli").all()
     last = df[df["date"] == df["date"].max()]
@@ -301,7 +301,7 @@ def test_rule_for_playbook_and_v1_fallback():
     with pytest.raises(ValueError):
         SleeveRule(score="xyz")
     assert ROT_V2.to_params()["playbook"]["bull"]["core_share"] == 0.70
-    assert [c.name for c in ACTIVE] == ["rot_v1", "rot_v2"]
+    assert [c.name for c in ACTIVE] == ["rot_v1b", "rot_v2"]
 
 
 def test_equity_weights_core_and_empty_slots():
@@ -377,3 +377,110 @@ def test_v2_comparison_and_ablations(inp):
     # "Sense condicionar" fa servir la regla alcista també en tendència baixista
     lg = res["targets"]["v2 sense condicionar"].log
     assert (lg.loc[lg["regime"] == "bear_volatile", "score"] == "trend").all()
+
+
+# ---------------------------------------------------------------------------------------
+# Setmana 7: bandes
+# ---------------------------------------------------------------------------------------
+
+def test_banded_simulation_truncation_invariant(inp):
+    rets = inp.asset_returns()
+    full = simulate_cfg(build_targets(inp, ROT_V1B), rets, ROT_V1B)
+    cut = inp.index[1000]
+    part_inp = inp.truncate(cut)
+    part = simulate_cfg(build_targets(part_inp, ROT_V1B), part_inp.asset_returns(), ROT_V1B)
+    pd.testing.assert_series_equal(part.returns, full.returns.loc[:cut])
+    pd.testing.assert_series_equal(part.trades, full.trades.loc[:cut])
+
+
+def test_rank_buffer_keeps_incumbents():
+    cfg = PortfolioConfig(top_k=2, rank_buffer=2, max_pair_corr=1.01)
+    scores = pd.Series({"A": 5.0, "B": 4.0, "C": 3.0, "D": 2.0, "E": 1.0})
+    # D és 4t: dins del top-(2+2) → es queda; ocupa una plaça i només entra A
+    assert select_sectors(scores, None, cfg, incumbents=["D", "E"]) == (["A", "D"], True)
+    # Sense incumbents (primera revisió) o sense banda: top-k
+    assert select_sectors(scores, None, cfg, incumbents=[]) == (["A", "B"], False)
+    assert select_sectors(scores, None, cfg.variant(rank_buffer=0), incumbents=["D"]) == (["A", "B"], False)
+    # Un incumbent que ja no és candidat (filtre absolut) no es queda
+    assert select_sectors(scores.drop("D"), None, cfg, incumbents=["D"])[0] == ["A", "B"]
+    # Amb filtre de correlació: els nous no poden duplicar un incumbent
+    m = pd.DataFrame(0.2, index=list("ABCDE"), columns=list("ABCDE"))
+    m.loc["A", "C"] = m.loc["C", "A"] = 0.95
+    chosen, _ = select_sectors(scores, m, cfg.variant(max_pair_corr=0.8, top_k=3), incumbents=["C"])
+    assert chosen == ["B", "C", "D"]  # A és massa correlacionat amb C (incumbent)
+
+
+def test_rank_buffer_reduces_sector_changes(inp):
+    def changes(cfg):
+        sec = build_targets(inp, cfg).log["sectors"]
+        sets = sec[sec != ""].str.split(",").map(set)
+        return sum(len(a - b) for a, b in zip(sets.iloc[1:], sets.iloc[:-1], strict=True))
+    assert changes(ROT_V1.variant(rank_buffer=2)) < changes(ROT_V1)
+
+
+def test_hedge_hysteresis():
+    cfg = ROT_V1.variant(hedge_hysteresis=0.1)
+    avail = {"IEF", "GLD"}
+    assert hedge_weights(-0.05, avail, cfg, in_bonds=False)[1] == "or+cash"  # cal < -0,10 per entrar
+    assert hedge_weights(-0.15, avail, cfg, in_bonds=False)[1] == "bons"
+    assert hedge_weights(0.05, avail, cfg, in_bonds=True)[1] == "bons"  # es queda fins a > +0,10
+    assert hedge_weights(0.15, avail, cfg, in_bonds=True)[1] == "or+cash"
+    assert hedge_weights(-0.05, avail, ROT_V1, in_bonds=False)[1] == "bons"  # sense histèresi
+
+
+def _two_asset(rets_a, rets_b, W, rev):
+    idx = pd.bdate_range("2020-01-01", periods=len(rets_a))
+    rets = pd.DataFrame({"A": rets_a, "B": rets_b, CASH: 0.0}, index=idx, dtype=float)
+    W = pd.DataFrame(W, index=idx, columns=["A", "B", CASH], dtype=float)
+    return Targets(W, pd.Series(rev, index=idx), pd.DataFrame()), rets
+
+
+def test_tracking_error_trigger_ignores_equivalent_assets():
+    rng = np.random.default_rng(3)
+    n = 80
+    base = 0.01 * rng.standard_normal(n)
+    a, b = base, base + 0.0005 * rng.standard_normal(n)  # B ≈ A
+    W = [[1.0, 0.0, 0.0]] * 70 + [[0.9, 0.1, 0.0]] * 10  # 10 % d'A cap a B a la sessió 70
+    rev = [i in (0, 70) for i in range(n)]
+    tg, rets = _two_asset(a, b, W, rev)
+    cov = rolling_cov(rets, ["A", "B", CASH], 63)
+    te = simulate(tg, rets, 5, 0.02, rebalance="tracking_error", te_band=0.01, cov=cov)
+    mx = simulate(tg, rets, 5, 0.02)
+    assert mx.trades.iloc[70] and not te.trades.iloc[70]  # en risc, A i B són el mateix
+    # Abans que hi hagi Σ (sessions < 63) el TE cau a max_abs
+    W2 = [[1.0, 0.0, 0.0]] * 30 + [[0.5, 0.5, 0.0]] * 50
+    tg2, rets2 = _two_asset(a, 0.02 * rng.standard_normal(n), W2, [i in (0, 30) for i in range(n)])
+    te2 = simulate(tg2, rets2, 5, 0.02, rebalance="tracking_error", cov=rolling_cov(rets2, ["A", "B", CASH], 63))
+    assert te2.trades.iloc[30]
+    with pytest.raises(ValueError):
+        simulate(tg, rets, rebalance="tracking_error")
+
+
+def test_daily_check_rebalances_drift():
+    n = 90
+    a = np.zeros(n)
+    a[70] = 0.5  # A puja un 50 % a mig mes
+    b = 0.01 * np.random.default_rng(5).standard_normal(n)
+    a = a + 0.01 * np.random.default_rng(6).standard_normal(n)
+    W = [[0.5, 0.5, 0.0]] * n
+    rev = [i == 0 for i in range(n)]
+    tg, rets = _two_asset(a, b, W, rev)
+    cov = rolling_cov(rets, ["A", "B", CASH], 63)
+    lazy = simulate(tg, rets, 5, rebalance="tracking_error", cov=cov)
+    daily = simulate(tg, rets, 5, rebalance="tracking_error", cov=cov, check_daily=True)
+    assert lazy.trades.sum() == 1  # només l'entrada
+    assert daily.trades.iloc[70] and daily.weights.iloc[70]["A"] == pytest.approx(0.5)
+    # Amb Σ disponible (sessió >= 62), la deriva normal queda dins de l'1 % de TE; abans,
+    # el disparador cau a max_abs (2 %) i la deriva sí que pot provocar reequilibris
+    assert daily.trades.iloc[62:70].sum() == 0
+
+
+def test_bands_comparison_and_verdict(inp):
+    res = ev.bands_comparison(inp, [(ROT_V1, ROT_V1B)])
+    assert {"rot_v1", "rot_v1b", "rot_v1 només banda de rang"} <= set(res["sims"])
+    v = res["verdict"]
+    assert list(v["finestra"]) == ["Completa", "Disseny 2000–2015", "Comprovació 2016–"]
+    assert v.iloc[2]["passa"] is None  # dades sintètiques fins al 2014
+    assert ev.bands_pass(v, "rot_v1 → rot_v1b") is None
+    sens = ev.bands_sensitivity(inp, ROT_V1B, buffers=(0, 2), te_bands=(0.01,))
+    assert len(sens) == 2 and sens["sharpe"].notna().all()

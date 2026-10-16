@@ -319,14 +319,15 @@ def portfolio_report(
     """Informe walk-forward: referències, ablacions, episodis, assignació i sensibilitat."""
     from pathlib import Path
 
-    from finance.portfolio.config import ROT_V1, ROT_V2
+    from finance.portfolio.config import ROT_V1, ROT_V1B, ROT_V2, ROT_V2B
     from finance.portfolio.job import load_inputs
     from finance.portfolio.report import build_report
     ctx = _ctx()
     cfg = ROT_V1
     path = Path(out) if out else ctx.settings.data_dir / "reports" / f"portfolio_{cfg.name}.html"
     # Les entrades de rot_v2 són un superconjunt (correlació accions-bons ràpida)
-    build_report(load_inputs(ctx, ROT_V2), cfg, path, with_sensitivity=not no_sensitivity, cfg_v2=ROT_V2)
+    build_report(load_inputs(ctx, ROT_V2), cfg, path, with_sensitivity=not no_sensitivity, cfg_v2=ROT_V2,
+                 band_pairs=[(ROT_V1, ROT_V1B), (ROT_V2, ROT_V2B)])
     console.print(str(path))
 
 
