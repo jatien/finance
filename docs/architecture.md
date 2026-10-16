@@ -11,9 +11,9 @@ con ellas a través del lake (datos versionados) y del registro de ejecuciones.
 │ 5. Cartera                 asignación por régimen, límites de riesgo, opciones │  (futuro)
 │ 4. Señales                 rotación sectorial, momentum, timing de entrada     │  (futuro)
 │ 3. Regímenes               bull/bear, volatilidad, estrés de crédito           │  (futuro)
-│ 2. Features                retornos, vol realizada/implícita, skew, breadth... │  (futuro)
+│ 2. Features                tendencia, vol, amplitud, crédito, correlación      │  ✅
 ├────────────────────────────────────────────────────────────────────────────┤
-│ 1. Datos  ← ESTA FASE                                                        │
+│ 1. Datos                                                                     │
 │    proveedores → jobs de ingesta → lake Parquet → catálogo DuckDB            │
 │    + calidad de datos + registro de ejecuciones (backlog auditable)          │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -118,6 +118,10 @@ ejecución queda como `partial` con el error registrado.
 | `instruments` | symbol, as_of_date | — | sector, industria, categoría de fondo, tamaño, beta |
 | `ingest_runs` | run_id | — | registro de cada ejecución |
 | `dq_results` | run_id, dataset, check_name, key | — | violaciones de calidad |
+| `features_daily` | feature_set, feature, date | year | features de mercado + percentil expansivo; se regenera entera |
+| `sector_features_daily` | feature_set, symbol, feature, date | year | panel sectorial + percentil transversal; se regenera entero |
+
+La capa de features se describe en [features.md](features.md).
 
 ## Universo
 

@@ -8,6 +8,9 @@ Exemples:
     fin ingest prices -s NVDA -s AMD # símbols concrets (també fora de l'univers)
     fin ingest options --force       # foto de cadenes encara que el mercat estigui tancat
     fin run daily                    # pipeline de tancament (el que executa systemd)
+    fin features build               # recalcula les features (capa 2) i les escriu al lake
+    fin features show                # estat actual del mercat segons les features
+    fin features report              # informe HTML: correlació de Spearman, cobertura, sèries
     fin status                       # estat del lake i dels últims jobs
     fin sql "SELECT * FROM job_status"
 """
@@ -30,7 +33,9 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, help="Sistema quan
 ingest_app = typer.Typer(no_args_is_help=True, help="Jobs d'ingesta individuals")
 run_app = typer.Typer(no_args_is_help=True, help="Pipelines compostos (per a systemd)")
 app.add_typer(ingest_app, name="ingest")
+features_app = typer.Typer(no_args_is_help=True, help="Capa 2: features de mercat i sectorials")
 app.add_typer(run_app, name="run")
+app.add_typer(features_app, name="features")
 console = Console()
 
 Symbols = Annotated[list[str] | None, typer.Option("--symbol", "-s", help="Símbol (repetible)")]
@@ -144,6 +149,72 @@ def dq(
     if not res.empty:
         _print_df(res.sort_values(["severity", "dataset", "check_name", "key"]).head(80), "Qualitat de dades")
     _exit(report)
+
+
+@features_app.command("build")
+def features_build(
+    start: str | None = typer.Option(None, help="Data inicial dels preus (per defecte, tot)"),
+    no_sp500: bool = typer.Option(False, "--no-sp500", help="Omet l'amplitud del S&P 500"),
+) -> None:
+    """Calcula features de mercat i panell sectorial i les escriu al lake."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "features", start=start, include_sp500=not no_sp500))
+
+
+@features_app.command("show")
+def features_show(
+    feature_set: str = typer.Option("core_v1", "--set"),
+    group: str = typer.Option("sectors", help="Grup del panell: sectors | industries"),
+) -> None:
+    """Últim valor i percentil històric de cada feature + rànquing sectorial."""
+    from finance.features.market import CATALOG
+    ctx = _ctx()
+    df = ctx.query("""
+        SELECT feature, family, date, value, pct_rank FROM features_daily
+        WHERE feature_set = ?
+        QUALIFY date = max(date) OVER (PARTITION BY feature)""", [feature_set])
+    if df.empty:
+        console.print("[yellow]sense features: executa `fin features build`[/yellow]")
+        raise typer.Exit(1)
+    order = {k: i for i, k in enumerate(CATALOG)}
+    df = df.sort_values("feature", key=lambda s: s.map(order))
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    df["value"] = df["value"].round(4)
+    df["pct_rank"] = (100 * df["pct_rank"]).round(0)
+    _print_df(df.rename(columns={"pct_rank": "percentil"}), f"Estat de mercat ({feature_set})")
+    rank = ctx.query("""
+        SELECT symbol, feature, value, xs_rank FROM sector_features_daily
+        WHERE feature_set = ? AND group_name = ?
+          AND feature IN ('risk_adj_mom', 'mom_12_1', 'rel_strength_3m', 'dist_sma200')
+        QUALIFY date = max(date) OVER ()""", [feature_set, group])
+    if not rank.empty:
+        wide = rank.pivot(index="symbol", columns="feature", values="value").round(3)
+        wide = wide.sort_values("risk_adj_mom", ascending=False).reset_index()
+        _print_df(wide, f"Panell {group} (ordenat per momentum ajustat per risc)")
+
+
+@features_app.command("report")
+def features_report(
+    feature_set: str = typer.Option("core_v1", "--set"),
+    out: str | None = typer.Option(None, help="Fitxer HTML de sortida"),
+) -> None:
+    """Informe HTML: redundàncies (Spearman), cobertura i sèries clau."""
+    from pathlib import Path
+
+    from finance.features.diagnostics import build_report
+    from finance.features.job import read_market_features
+    ctx = _ctx()
+    feats = read_market_features(ctx, feature_set, "value")
+    if feats.empty:
+        console.print("[yellow]sense features: executa `fin features build`[/yellow]")
+        raise typer.Exit(1)
+    pct = read_market_features(ctx, feature_set, "pct_rank")
+    msg = ctx.query("""SELECT message FROM ingest_runs WHERE job = 'features'
+                      ORDER BY started_at DESC LIMIT 1""")
+    notes = [] if msg.empty or not msg["message"].iloc[0] else msg["message"].iloc[0].split("; ")[1:]
+    path = Path(out) if out else ctx.settings.data_dir / "reports" / f"features_{feature_set}.html"
+    build_report(feats, pct, path, feature_set=feature_set, notes=notes)
+    console.print(str(path))
 
 
 @app.command()
