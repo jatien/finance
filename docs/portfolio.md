@@ -198,3 +198,45 @@ Episodios: punto com −20,3 % (`rot_v1` −13,6 %), crisis financiera +1,2 % (+
   dispersión entre sectores es alta, más SPY cuando es baja.
 - Probar "sin núcleo" con la puntuación de tendencia en una muestra que no se haya usado:
   industrias (SMH, IGV...) en lugar de sectores, o el tramo de paper trading.
+
+## Bandas de no negociación (semana 7)
+
+### Diagnóstico previo (sobre las estrategias existentes, sin reglas nuevas)
+
+| | Rotación/año | Altas/bajas de activos | Reajustes de peso | En cambios de régimen | Operaciones/año |
+|---|---|---|---|---|---|
+| `rot_v1` | 8,6 | 7,1 (83 %) | 1,5 | 3,6 | 11,1 |
+| `rot_v2` | 5,2 | 3,8 (74 %) | 1,3 | 3,3 | 9,8 |
+
+En la mitad de las revisiones mensuales entra al menos un sector nuevo (sale otro). La banda
+del 2 % solo actúa sobre los reajustes de peso, la parte pequeña: por eso no cambiaba nada.
+
+### Pre-registro
+
+Escrito y confirmado en git **antes** de ejecutar ningún backtest de las versiones con
+bandas. Una banda por cada fuente de rotación (`BANDS_V1` en `portfolio/config.py`):
+
+| Banda | Regla | Valor | Ataca |
+|---|---|---|---|
+| De rango | un sector en cartera se queda mientras esté en el top-(k + 2): "compra el top-3, vende cuando sale del top-5" | `rank_buffer = 2` | altas/bajas de sectores |
+| De tracking error | se reequilibra solo si `sqrt((w − w*)ᵀ Σ (w − w*) · 252) > 1 %`, con Σ de 63 sesiones (Palomar, sec. 6.1.5). Mide la distancia en riesgo, no en peso | `te_band = 1 %` | reajustes pequeños y cambios entre activos casi equivalentes |
+| Comprobación diaria | el disparador anterior se evalúa cada sesión contra el último objetivo, no solo en las revisiones | `check_daily = True` | deriva de precios entre revisiones |
+| Histéresis de cobertura | se entra en bonos con correlación < −0,10 y se sale con > +0,10 | `hedge_hysteresis = 0,10` | cambios bonos ↔ oro+efectivo |
+
+Se aplican a las dos estrategias activas: `rot_v1b = rot_v1 + bandas` y
+`rot_v2b = rot_v2 + bandas`. La exposición E y la puntuación no cambian.
+
+Valores convencionales, no optimizados: top-5 para mantener un top-3 es la regla habitual de
+los "hold buffers" de momentum; 1 % de TE es del orden de lo que mueve un reajuste del 5 % de
+un sector y muy por debajo de lo que mueve un cambio de sector o de exposición (~5 %).
+
+**Criterio** (para cada pareja `rot_vX → rot_vXb`):
+
+1. La rotación anual (muestra completa 2000-01 → 2026-10) baja al menos un **25 %**, y
+2. en las ventanas de diseño (2000–2015) y comprobación (2016–2026), el Sharpe no baja más de
+   **0,03** y la caída máxima no empeora más de **2 puntos**.
+
+Si pasa, la versión con bandas sustituye a la original en el registro diario de decisiones
+(la original queda en el código como referencia). Si no, se registra el resultado y no cambia
+nada. Ablaciones: cada banda por separado sobre `rot_v1` y `rot_v2`. Sensibilidad (robustez,
+no selección): `rank_buffer` 0–3 × `te_band` 0,5/1/2 %.

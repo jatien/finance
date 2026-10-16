@@ -65,6 +65,10 @@ class PortfolioConfig:
     # places amb els millors restants (el filtre és una preferència, no redueix el nombre).
     corr_window: int = 126
     max_pair_corr: float = 0.80
+    # Banda de rang (setmana 7): un sector que ja és a la cartera s'hi queda mentre el seu
+    # rang sigui <= top_k + rank_buffer ("compra el top-3, ven quan surt del top-5").
+    # 0 = cada revisió tria el top-k de nou (rot_v1/rot_v2). Els nous entren pel filtre de correlació.
+    rank_buffer: int = 0
     # Pesos dins del bloc de sectors: inversos a la volatilitat de 3 mesos
     inverse_vol: bool = True
 
@@ -80,6 +84,9 @@ class PortfolioConfig:
     # `hedge_fast_window` sessions és < bond_hedge_max_corr. None = només la de 3 mesos (rot_v1).
     # Motiu: el 2022 la correlació de 3 mesos encara era negativa quan bons i accions ja queien junts.
     hedge_fast_window: int | None = None
+    # Histèresi de la cobertura (setmana 7): s'entra en bons quan la correlació < llindar - h i
+    # se'n surt quan > llindar + h. 0 = sense histèresi.
+    hedge_hysteresis: float = 0.0
 
     # Construcció per règim ----------------------------------------------------------------
     # Parelles (clau, SleeveRule). La clau és un règim ("bull_volatile") o una tendència
@@ -89,11 +96,27 @@ class PortfolioConfig:
 
     # Execució -----------------------------------------------------------------------------
     cost_bps: float = 5.0  # per unitat de nominal negociat (sense comptar el cash)
-    # Banda de no-negociació: en una data de revisió només es reequilibra si algun pes
-    # s'allunya més d'aquesta quantitat de l'objectiu (estabilitat i menys costos)
+    # Disparador del reequilibri (Palomar, secció 6.1.5: reequilibrar només si la distància
+    # entre la cartera i l'objectiu supera un llindar):
+    #   "max_abs"         algun pes s'allunya de l'objectiu més de `band` (rot_v1/rot_v2)
+    #   "tracking_error"  sqrt((w - w*)ᵀ Σ (w - w*) · 252) > te_band, amb Σ de `te_window`
+    #                     sessions (causal). Mesura la distància en risc, no en pes: un canvi
+    #                     entre dos sectors molt correlacionats pesa poc. Sense Σ → max_abs.
+    rebalance: str = "max_abs"
     band: float = 0.02
+    te_band: float = 0.01
+    te_window: int = 63
+    # Comprovar el disparador cada sessió (no només a les revisions): si la deriva dels preus
+    # allunya la cartera de l'objectiu, es reequilibra sense esperar a la revisió mensual.
+    check_daily: bool = False
 
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.rebalance not in ("max_abs", "tracking_error"):
+            raise ValueError(f"rebalance desconegut: {self.rebalance}")
+        if self.rank_buffer < 0 or self.hedge_hysteresis < 0:
+            raise ValueError("rank_buffer i hedge_hysteresis han de ser >= 0")
 
     def to_params(self) -> dict[str, Any]:
         d = asdict(self)
@@ -138,6 +161,20 @@ ROT_V2 = PortfolioConfig(
 )
 
 ROT_V1 = PortfolioConfig()
+
+# Bandes de la setmana 7 (pre-registrades: vegeu docs/portfolio.md). Una per cada font de
+# rotació del diagnòstic: altes/baixes de sectors (banda de rang), petits reajustos i deriva
+# (tracking error, comprovat cada dia) i canvis de cobertura (histèresi).
+BANDS_V1: dict[str, Any] = {
+    "rank_buffer": 2,
+    "rebalance": "tracking_error",
+    "te_band": 0.01,
+    "te_window": 63,
+    "check_daily": True,
+    "hedge_hysteresis": 0.10,
+}
+ROT_V1B = ROT_V1.variant(name="rot_v1b", **BANDS_V1)
+ROT_V2B = ROT_V2.variant(name="rot_v2b", **BANDS_V1)
 
 # Estratègies que el job `portfolio` escriu cada dia al registre de decisions (paper trading).
 # La primera és la de referència per a `fin portfolio show`. rot_v2 no va passar el criteri
