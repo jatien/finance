@@ -327,12 +327,64 @@ DQ_RESULTS = DatasetSpec(
     audit=False,
 )
 
+# ---------------------------------------------------------------------------------------
+# Capa 2: features (derivades; es regeneren senceres a cada execució)
+# ---------------------------------------------------------------------------------------
+
+FEATURES_DAILY = DatasetSpec(
+    name="features_daily",
+    path="features/market_daily",
+    description=(
+        "Features d'estat de mercat (tendència, volatilitat, amplitud, crèdit, tipus, "
+        "correlació) en format llarg. El valor de la data t només fa servir informació "
+        "disponible al tancament de t. `pct_rank` és el percentil en finestra expansiva "
+        "(sense look-ahead)."
+    ),
+    fields=[
+        pa.field("feature_set", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("feature", pa.string(), nullable=False),
+        pa.field("family", pa.string(), nullable=False),
+        pa.field("value", pa.float64()),
+        pa.field("pct_rank", pa.float64()),
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("feature_set", "feature", "date"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("feature_set", "feature", "date"),
+    snapshot_by=("feature_set",),
+)
+
+SECTOR_FEATURES_DAILY = DatasetSpec(
+    name="sector_features_daily",
+    path="features/sector_daily",
+    description=(
+        "Panell de features per ETF de sector/indústria (momentum, volatilitat, força "
+        "relativa, beta...). `xs_rank` és el percentil transversal entre els símbols "
+        "disponibles aquell dia (base de la rotació sectorial)."
+    ),
+    fields=[
+        pa.field("feature_set", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("group_name", pa.string(), nullable=False),
+        pa.field("feature", pa.string(), nullable=False),
+        pa.field("value", pa.float64()),
+        pa.field("xs_rank", pa.float64()),
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("feature_set", "symbol", "feature", "date"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("feature_set", "symbol", "feature", "date"),
+    snapshot_by=("feature_set",),
+)
+
 REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
         PRICES_DAILY, CORPORATE_ACTIONS, OPTION_SNAPSHOTS, MACRO_OBSERVATIONS,
         UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
-        DQ_RESULTS,
+        DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY,
     )
 }
 
