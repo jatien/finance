@@ -108,7 +108,7 @@ def holdings_summary(sim: SimResult, inp: PortfolioInputs, start: pd.Timestamp) 
 
 def review_summary(log: pd.DataFrame, start: pd.Timestamp) -> dict[str, float]:
     lg = log.loc[start:]
-    lg = lg[lg["sectors"] != ""]
+    lg = lg[lg["hedge"] != "sense canvis"]
     years = max((lg.index.max() - lg.index.min()).days / 365.25, 1e-9) if len(lg) else np.nan
     return {
         "revisions": len(lg),
@@ -150,4 +150,77 @@ def sensitivity(inp: PortfolioInputs, cfg: PortfolioConfig, grid: dict[str, list
             m = perf_metrics(r, inp.cash_ret, None, s.turnover)
             rows.append({**changes, "band": b,
                          **{k: m.get(k) for k in ("CAGR_%", "sharpe", "max_dd_%", "calmar", "rotacio_anual")}})
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------------------
+# rot_v2: construcció condicionada al règim (setmana 6)
+# ---------------------------------------------------------------------------------------
+
+V2 = "rot_v2"
+V1 = "rot_v1"
+V2_WINDOWS = (("Completa", None, None), ("Disseny 2000–2015", "2000-01-01", "2015-12-31"),
+              ("Comprovació 2016–", "2016-01-01", None))
+
+
+def v2_ablations(cfg2: PortfolioConfig) -> dict[str, PortfolioConfig]:
+    """Variants que treuen una peça de rot_v2 cada vegada (protocol del pre-registre)."""
+    rules = dict(cfg2.playbook or ())
+    bull, bear = rules["bull"], rules["bear"]
+
+    def pb(b, br):
+        return (("bull", b), ("bear", br))
+
+    from dataclasses import replace
+    return {
+        "v2 sense nucli": cfg2.variant(playbook=pb(replace(bull, core_share=0.0), replace(bear, core_share=0.0))),
+        "v2 sense filtre absolut": cfg2.variant(playbook=pb(replace(bull, abs_mom_filter=False), bear)),
+        "v2 amb puntuació v1 en alcista": cfg2.variant(playbook=pb(replace(bull, score="risk_adj"), bear)),
+        "v2 amb cobertura v1": cfg2.variant(hedge_fast_window=None),
+        "v2 sense condicionar": cfg2.variant(playbook=(("bull", bull), ("bear", bull))),
+    }
+
+
+def v2_targets(inp: PortfolioInputs, cfg1: PortfolioConfig, cfg2: PortfolioConfig) -> dict[str, Targets]:
+    v1 = build_targets(inp, cfg1)
+    start = v1.weights.dropna().index.min()
+    out = {
+        "SPY buy & hold": fixed_targets(inp.index, {cfg1.market: 1.0}, monthly=False, start=start),
+        "60/40 SPY/IEF": sixty_forty(inp, cfg1),
+        "Règims sobre SPY": regime_on_market(inp, cfg1),
+        V1: v1,
+        V2: build_targets(inp, cfg2),
+    }
+    out.update({k: build_targets(inp, c) for k, c in v2_ablations(cfg2).items()})
+    return out
+
+
+def v2_comparison(inp: PortfolioInputs, cfg1: PortfolioConfig, cfg2: PortfolioConfig,
+                  targets: dict[str, Targets] | None = None) -> dict:
+    """Mètriques per finestra, episodis i el veredicte del criteri pre-registrat."""
+    targets = targets or v2_targets(inp, cfg1, cfg2)
+    rets = inp.asset_returns()
+    sims = {k: simulate(t, rets, cfg2.cost_bps, cfg2.band) for k, t in targets.items()}
+    start = sims[V1].start
+    tables = {}
+    for label, a, b in V2_WINDOWS:
+        s = max(start, pd.Timestamp(a)) if a else start
+        tables[label] = metrics_table(sims, inp, cfg2, s, pd.Timestamp(b) if b else None)
+    return {"sims": sims, "targets": targets, "start": start, "tables": tables,
+            "episodes": episodes(sims, start), "verdict": v2_verdict(tables)}
+
+
+def v2_verdict(tables: dict[str, pd.DataFrame], max_dd_slack: float = 3.0) -> pd.DataFrame:
+    """Criteri del pre-registre: Sharpe més alt I caiguda no pitjor en > 3 punts, a disseny i comprovació."""
+    rows = []
+    for label in [w[0] for w in V2_WINDOWS[1:]]:
+        t = tables[label].set_index("estrategia")
+        if "sharpe" not in t or t.loc[[V1, V2], ["sharpe", "max_dd_%"]].isna().any().any():
+            rows.append({"finestra": label, "passa": None})  # finestra sense dades
+            continue
+        d_sharpe = t.at[V2, "sharpe"] - t.at[V1, "sharpe"]
+        d_dd = t.at[V2, "max_dd_%"] - t.at[V1, "max_dd_%"]  # negatiu = caiguda pitjor
+        rows.append({"finestra": label, "sharpe_v1": t.at[V1, "sharpe"], "sharpe_v2": t.at[V2, "sharpe"],
+                     "dd_v1_%": t.at[V1, "max_dd_%"], "dd_v2_%": t.at[V2, "max_dd_%"],
+                     "passa": bool(d_sharpe > 0 and d_dd >= -max_dd_slack)})
     return pd.DataFrame(rows)

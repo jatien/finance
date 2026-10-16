@@ -275,14 +275,16 @@ def regimes_report(
 
 
 @portfolio_app.command("build")
-def portfolio_build() -> None:
-    """Calcula la cartera objectiu del sistema i escriu el registre de decisions."""
+def portfolio_build(
+    strategy_set: Annotated[list[str] | None, typer.Option("--set", help="Estratègia (repetible); per defecte, totes les actives")] = None,
+) -> None:
+    """Calcula la cartera objectiu de les estratègies actives i escriu el registre de decisions."""
     from finance.ingest import run_job
-    _exit(run_job(_ctx(), "portfolio"))
+    _exit(run_job(_ctx(), "portfolio", strategies=strategy_set))
 
 
 @portfolio_app.command("show")
-def portfolio_show(strategy_set: str = typer.Option("rot_v1", "--set"),
+def portfolio_show(strategy_set: str | None = typer.Option(None, "--set", help="Per defecte, la de referència"),
                    n: int = typer.Option(3, help="Revisions amb canvis a mostrar")) -> None:
     """Cartera objectiu actual i últims canvis suggerits."""
     from finance.portfolio.job import read_targets
@@ -293,7 +295,7 @@ def portfolio_show(strategy_set: str = typer.Option("rot_v1", "--set"),
         raise typer.Exit(1)
     last = df[df["date"] == df["date"].max()]
     head = last.iloc[0]
-    console.print(f"[bold]{head['date']:%Y-%m-%d}[/bold]  règim [bold]{head['regime']}[/bold] · "
+    console.print(f"[bold]{head['strategy_set']}[/bold] · [bold]{head['date']:%Y-%m-%d}[/bold]  règim [bold]{head['regime']}[/bold] · "
                   f"renda variable {head['equity_exposure']:.0%}"
                   + (f" · cobertura {head['hedge']}" if head["equity_exposure"] < 1 else ""))
     cur = last[last["target_weight"] > 0][["symbol", "sleeve", "target_weight", "action"]].copy()
@@ -317,13 +319,14 @@ def portfolio_report(
     """Informe walk-forward: referències, ablacions, episodis, assignació i sensibilitat."""
     from pathlib import Path
 
-    from finance.portfolio.config import PortfolioConfig
+    from finance.portfolio.config import ROT_V1, ROT_V2
     from finance.portfolio.job import load_inputs
     from finance.portfolio.report import build_report
     ctx = _ctx()
-    cfg = PortfolioConfig()
+    cfg = ROT_V1
     path = Path(out) if out else ctx.settings.data_dir / "reports" / f"portfolio_{cfg.name}.html"
-    build_report(load_inputs(ctx, cfg), cfg, path, with_sensitivity=not no_sensitivity)
+    # Les entrades de rot_v2 són un superconjunt (correlació accions-bons ràpida)
+    build_report(load_inputs(ctx, ROT_V2), cfg, path, with_sensitivity=not no_sensitivity, cfg_v2=ROT_V2)
     console.print(str(path))
 
 

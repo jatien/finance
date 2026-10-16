@@ -40,7 +40,28 @@ def _sleeves(w: pd.DataFrame, cfg: PortfolioConfig, sectors: list[str]) -> pd.Da
     })
 
 
-def build_report(inp: PortfolioInputs, cfg: PortfolioConfig, path: Path, *, with_sensitivity: bool = True) -> Path:
+def _v2_section(inp: PortfolioInputs, cfg1: PortfolioConfig, cfg2: PortfolioConfig) -> str:
+    """Secció de la setmana 6: rot_v2 contra rot_v1, ablacions i criteri pre-registrat."""
+    res = ev.v2_comparison(inp, cfg1, cfg2)
+    cols = ["estrategia", "CAGR_%", "vol_%", "sharpe", "max_dd_%", "calmar", "rotacio_anual"]
+    windows = "".join(f"<h3>{k}</h3><div class='wrap'>{_table(t[cols])}</div>" for k, t in res["tables"].items())
+    verdict = res["verdict"].copy()
+    verdict["passa"] = verdict["passa"].map({True: "sí", False: "no", None: "—"})
+    ok = res["verdict"]["passa"].dropna()
+    head = ("<b>rot_v2 passa el criteri</b>" if len(ok) and ok.all() else
+            "<b>rot_v2 no passa el criteri</b>: rot_v1 continua sent la referència")
+    ep = res["episodes"]
+    keep = [c for c in ep.columns if c in ("episodi", "inici", "fi", "SPY buy & hold", ev.V1, ev.V2,
+                                            "v2 sense condicionar", "v2 sense nucli")]
+    return f"""<h2>6. Construcció condicionada al règim (rot_v2)</h2>
+<p class="note">Pre-registre a docs/portfolio.md. Criteri: Sharpe més alt que rot_v1 i caiguda màxima
+no pitjor en més de 3 punts, a les finestres de disseny i de comprovació. {head}.</p>
+<div class="wrap">{_table(verdict)}</div>{windows}
+<h3>Episodis (%)</h3><div class="wrap">{_table(ep[keep], 1)}</div>"""
+
+
+def build_report(inp: PortfolioInputs, cfg: PortfolioConfig, path: Path, *, with_sensitivity: bool = True,
+                 cfg_v2: PortfolioConfig | None = None) -> Path:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -58,6 +79,7 @@ def build_report(inp: PortfolioInputs, cfg: PortfolioConfig, path: Path, *, with
     holdings = ev.holdings_summary(main, inp, start)
     annual = ev.annual_returns(sims, CURVE_STRATEGIES, start).round(1).reset_index(names="any")
     sens = ev.sensitivity(inp, cfg) if with_sensitivity else pd.DataFrame()
+    v2_html = _v2_section(inp, cfg, cfg_v2) if cfg_v2 is not None else ""
 
     # Cartera objectiu actual i últimes decisions --------------------------------------
     log = decision_log(main_t, cfg)
@@ -133,7 +155,7 @@ banda de no-negociació. Serveix per veure si el resultat depèn d'un punt concr
 <style>
 body{{background:{SURFACE};color:{INK};font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
 max-width:1200px;margin:24px auto;padding:0 16px;line-height:1.45}}
-h1{{font-size:22px;margin-bottom:4px}} h2{{font-size:17px;margin-top:36px}}
+h1{{font-size:22px;margin-bottom:4px}} h2{{font-size:17px;margin-top:36px}} h3{{font-size:14px;margin:18px 0 6px}}
 p.sub{{color:{INK_2};margin-top:0}} .note{{color:{INK_2};font-size:13px;max-width:900px}}
 table.t{{border-collapse:collapse;font-size:12.5px;width:100%;font-variant-numeric:tabular-nums}}
 table.t th{{text-align:left;color:{INK_2};font-weight:600;border-bottom:1px solid #c3c2b7;padding:6px 8px}}
@@ -175,6 +197,7 @@ La cartera decidida al tancament de t guanya el retorn de t+1. Cash = T-bills 3M
 <h2>4. Rendiment anual (%)</h2>
 <div class="wrap">{_table(annual, 1)}</div>
 {sens_html}
+{v2_html}
 </body></html>"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")
