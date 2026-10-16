@@ -14,6 +14,9 @@ Exemples:
     fin regimes build                # classifica el règim de mercat de cada sessió (capa 3)
     fin regimes show                 # règim actual, exposició recomanada i últims canvis
     fin regimes report               # informe HTML de validació (estadístiques, backtest, sensibilitat)
+    fin portfolio build              # cartera objectiu i registre de decisions (capes 4-5)
+    fin portfolio show               # cartera objectiu actual i últims canvis suggerits
+    fin portfolio report             # informe HTML: walk-forward contra referències i ablacions
     fin status                       # estat del lake i dels últims jobs
     fin sql "SELECT * FROM job_status"
 """
@@ -41,6 +44,8 @@ app.add_typer(run_app, name="run")
 app.add_typer(features_app, name="features")
 regimes_app = typer.Typer(no_args_is_help=True, help="Capa 3: règims de mercat")
 app.add_typer(regimes_app, name="regimes")
+portfolio_app = typer.Typer(no_args_is_help=True, help="Capes 4-5: rotació sectorial i cartera objectiu")
+app.add_typer(portfolio_app, name="portfolio")
 console = Console()
 
 Symbols = Annotated[list[str] | None, typer.Option("--symbol", "-s", help="Símbol (repetible)")]
@@ -266,6 +271,59 @@ def regimes_report(
     cfg = RegimeConfig()
     path = Path(out) if out else ctx.settings.data_dir / "reports" / f"regimes_{cfg.name}.html"
     build_report(load_eval_inputs(ctx, cfg), cfg, path, cost_bps)
+    console.print(str(path))
+
+
+@portfolio_app.command("build")
+def portfolio_build() -> None:
+    """Calcula la cartera objectiu del sistema i escriu el registre de decisions."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "portfolio"))
+
+
+@portfolio_app.command("show")
+def portfolio_show(strategy_set: str = typer.Option("rot_v1", "--set"),
+                   n: int = typer.Option(3, help="Revisions amb canvis a mostrar")) -> None:
+    """Cartera objectiu actual i últims canvis suggerits."""
+    from finance.portfolio.job import read_targets
+    ctx = _ctx()
+    df = read_targets(ctx, strategy_set)
+    if df.empty:
+        console.print("[yellow]sense cartera: executa `fin portfolio build`[/yellow]")
+        raise typer.Exit(1)
+    last = df[df["date"] == df["date"].max()]
+    head = last.iloc[0]
+    console.print(f"[bold]{head['date']:%Y-%m-%d}[/bold]  règim [bold]{head['regime']}[/bold] · "
+                  f"renda variable {head['equity_exposure']:.0%}"
+                  + (f" · cobertura {head['hedge']}" if head["equity_exposure"] < 1 else ""))
+    cur = last[last["target_weight"] > 0][["symbol", "sleeve", "target_weight", "action"]].copy()
+    cur["target_weight"] = cur["target_weight"].map("{:.1%}".format)
+    _print_df(cur, "Cartera objectiu")
+    ch = df[df["action"] != "hold"]
+    dates = sorted(ch["date"].unique())[-n:][::-1]
+    ch = ch[ch["date"].isin(dates)].sort_values(["date", "change"], ascending=[False, False]).copy()
+    ch["date"] = ch["date"].dt.date
+    for c in ("prev_weight", "target_weight", "change"):
+        ch[c] = ch[c].map("{:+.1%}".format if c == "change" else "{:.1%}".format)
+    _print_df(ch[["date", "regime", "symbol", "action", "prev_weight", "target_weight", "change"]],
+              "Últims canvis suggerits")
+
+
+@portfolio_app.command("report")
+def portfolio_report(
+    out: str | None = typer.Option(None, help="Fitxer HTML de sortida"),
+    no_sensitivity: bool = typer.Option(False, "--no-sensitivity", help="Omet la graella (més ràpid)"),
+) -> None:
+    """Informe walk-forward: referències, ablacions, episodis, assignació i sensibilitat."""
+    from pathlib import Path
+
+    from finance.portfolio.config import PortfolioConfig
+    from finance.portfolio.job import load_inputs
+    from finance.portfolio.report import build_report
+    ctx = _ctx()
+    cfg = PortfolioConfig()
+    path = Path(out) if out else ctx.settings.data_dir / "reports" / f"portfolio_{cfg.name}.html"
+    build_report(load_inputs(ctx, cfg), cfg, path, with_sensitivity=not no_sensitivity)
     console.print(str(path))
 
 

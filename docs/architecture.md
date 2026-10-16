@@ -8,8 +8,8 @@ con ellas a través del lake (datos versionados) y del registro de ejecuciones.
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ 6. Ejecución / alertas     órdenes sugeridas: entrar, añadir, reducir, cubrir │  (futuro)
-│ 5. Cartera                 asignación por régimen, límites de riesgo, opciones │  (futuro)
-│ 4. Señales                 rotación sectorial, momentum, timing de entrada     │  (futuro)
+│ 5. Cartera                 E·sectores + (1−E)·cobertura, motor walk-forward    │  ✅ (parcial)
+│ 4. Señales                 rotación sectorial por régimen, acciones sugeridas   │  ✅
 │ 3. Regímenes               tendencia × volatilidad + crisis → exposición        │  ✅
 │ 2. Features                tendencia, vol, amplitud, crédito, correlación      │  ✅
 ├────────────────────────────────────────────────────────────────────────────┤
@@ -123,8 +123,10 @@ ejecución queda como `partial` con el error registrado.
 
 | `regimes_daily` | regime_set, date | year | régimen, exposición recomendada y acción (add/reduce/hold); se regenera entero |
 
-La capa de features se describe en [features.md](features.md) y la de regímenes en
-[regimes.md](regimes.md).
+| `portfolio_targets` | strategy_set, date, symbol | year | registro de decisiones: cartera objetivo y acción (enter/add/reduce/exit/hold) en cada revisión |
+
+La capa de features se describe en [features.md](features.md), la de regímenes en
+[regimes.md](regimes.md) y la rotación y cartera en [portfolio.md](portfolio.md).
 
 ## Universo
 

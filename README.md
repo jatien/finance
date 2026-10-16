@@ -5,15 +5,15 @@ bull/bear), sectores en auge, y sugerencias de entrada, ampliación y reducción
 en fondos, acciones y opciones.
 
 El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture.md)).
-**Fase actual: capa de regímenes (3).**
+**Fase actual: rotación sectorial y cartera objetivo (4-5).**
 
 | Capa | Estado |
 |---|---|
 | 1. Datos: ingesta, data lake Parquet/DuckDB, opciones, macro, calidad, registro de ejecuciones | ✅ |
 | 2. Features: tendencia, volatilidad, amplitud, crédito, correlación, panel sectorial ([docs](docs/features.md)) | ✅ |
 | 3. Regímenes: tendencia × volatilidad + crisis, exposición recomendada y validación ([docs](docs/regimes.md)) | ✅ |
-| 4. Señales: rotación sectorial, timing de entrada/salida | — |
-| 5. Cartera: asignación por régimen, riesgo, estrategias con opciones | — |
+| 4. Señales: rotación sectorial por régimen, cobertura, acciones entrar/añadir/reducir/salir ([docs](docs/portfolio.md)) | ✅ |
+| 5. Cartera: asignación por régimen y walk-forward ✅; límites de riesgo y opciones | parcial |
 | 6. Alertas / ejecución | — |
 
 ## Qué datos recoge
@@ -56,6 +56,9 @@ uv run fin features report                         # informe HTML (uv sync --ext
 uv run fin regimes build                           # capa 3: régimen de cada sesión
 uv run fin regimes show                            # régimen actual y exposición recomendada
 uv run fin regimes report                          # validación: backtest, ablaciones, sensibilidad
+uv run fin portfolio build                         # capas 4-5: cartera objetivo + registro de decisiones
+uv run fin portfolio show                          # cartera actual y cambios sugeridos
+uv run fin portfolio report                        # walk-forward contra referencias
 uv run fin status
 uv run fin sql "SELECT * FROM prices_coverage ORDER BY last_date LIMIT 10"
 uv run pytest
@@ -100,6 +103,7 @@ src/finance/           código (comentarios en catalán)
   quality/             controles de calidad
   features/            capa 2: features point-in-time (mercado + panel sectorial)
   regimes/             capa 3: regímenes por reglas, exposición y validación
+  portfolio/           capas 4-5: rotación sectorial, cobertura, motor walk-forward
 tests/                 pytest con proveedores simulados (sin red)
 deploy/                bootstrap del servidor, unidades systemd, backup
 docs/                  arquitectura y operación

@@ -83,16 +83,19 @@ def load_eval_inputs(ctx, cfg: RegimeConfig | None = None) -> EvalInputs:
     px = load_prices(ctx, [fcfg.market, *sector_syms]).reindex(idx).ffill(limit=3)
     market = px[fcfg.market]
     notes: list[str] = []
-    # Cash: T-bill 3M (FRED DGS3MO, disponible l'endemà), rendiment del dia t-1 → t
+    cash = cash_returns(ctx, idx, notes)
+    asset_ret = market / market.shift(1) - 1
+    return EvalInputs(values=values, pct=pct, market=market, asset_ret=asset_ret,
+                      cash_ret=cash, sectors=px[[s for s in sector_syms if s in px]], notes=notes)
+
+
+def cash_returns(ctx, index: pd.DatetimeIndex, notes: list[str]) -> pd.Series:
+    """Retorn diari del cash (t-1 → t): T-bill 3M de FRED (DGS3MO), disponible l'endemà."""
     obs = ctx.query("""SELECT date, value, realtime_start, vintage_mode FROM macro_observations
                        WHERE series_id = 'DGS3MO'""")
     if obs.empty:
         notes.append("sense DGS3MO: el cash rendeix 0 % (`fin ingest macro --series DGS3MO`)")
-        cash = pd.Series(0.0, index=idx)
-    else:
-        rate = macro_pit_daily(obs, idx, fcfg.macro_lag_sessions).ffill()
-        cash = (rate / 100 / TRADING_DAYS).shift(1).fillna(0.0)
-    asset_ret = market / market.shift(1) - 1
-    return EvalInputs(values=values, pct=pct, market=market, asset_ret=asset_ret,
-                      cash_ret=cash.replace([np.inf, -np.inf], 0.0),
-                      sectors=px[[s for s in sector_syms if s in px]], notes=notes)
+        return pd.Series(0.0, index=index)
+    rate = macro_pit_daily(obs, index, FeatureConfig().macro_lag_sessions).ffill()
+    cash = (rate / 100 / TRADING_DAYS).shift(1).fillna(0.0)
+    return cash.replace([np.inf, -np.inf], 0.0)
