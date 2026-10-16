@@ -2,7 +2,8 @@
 
 Exemples:
     fin init                         # crea directoris i catàleg
-    fin ingest universe              # membres S&P 500 + historial de canvis
+    fin ingest universe              # membres actuals del S&P 500 (Wikipedia)
+    fin ingest universe-history      # historial de composició des de 1996
     fin ingest prices                # preus incrementals de tot l'univers
     fin ingest prices -s NVDA -s AMD # símbols concrets (també fora de l'univers)
     fin ingest options --force       # foto de cadenes encara que el mercat estigui tancat
@@ -97,6 +98,13 @@ def ingest_universe() -> None:
     """Membres d'univers dinàmics (S&P 500) i historial d'altes/baixes."""
     from finance.ingest import run_job
     _exit(run_job(_ctx(), "universe"))
+
+
+@ingest_app.command("universe-history")
+def ingest_universe_history() -> None:
+    """Historial de composició (S&P 500 des de 1996) combinat amb les fotos pròpies."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "universe_history"))
 
 
 @ingest_app.command("instruments")

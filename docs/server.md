@@ -70,9 +70,10 @@ activadas. Para **actualizar** el código basta con volver a ejecutarlo
 
 Después:
 
-1. Pide una clave gratuita de FRED (<https://fred.stlouisfed.org/docs/api/api_key.html>) y
-   ponla en `/etc/finance/finance.env` → `FIN_FRED_API_KEY=...`. Sin ella, las series
-   revisables (empleo, IPC...) no tienen vintages y los backtests macro tendrían look-ahead.
+1. Pon tu clave de FRED en `/etc/finance/finance.env` → `FIN_FRED_API_KEY=...`
+   (`sudo nano /etc/finance/finance.env`; el fichero es `640 root:<usuario>` y nunca va al
+   repositorio). Sin ella, las series revisables (empleo, IPC...) no tienen vintages y los
+   backtests macro tendrían look-ahead.
 2. Carga inicial: `sudo systemctl start finance-weekly.service` (universo + metadatos) y
    luego `sudo systemctl start finance-daily.service` (≈580 instrumentos desde 1990, unos
    minutos).
@@ -83,7 +84,7 @@ Después:
 |---|---|---|
 | `finance-options` | L–V 10:00, 12:45, 15:30 (hora NY) | Foto de cadenas de opciones completas |
 | `finance-daily` | L–V 21:15 (hora NY; 03:15 en Madrid) | Universo si tiene >7 días → precios → macro → calidad → compactación |
-| `finance-weekly` | Sábado 10:00 (Madrid) | Universo S&P 500, metadatos de instrumentos, compactación completa |
+| `finance-weekly` | Sábado 10:00 (Madrid) | Universo S&P 500, historial de composición, metadatos, compactación completa |
 | `finance-backup` | Diario 05:30 (Madrid), tras el pipeline diario | Copia del lake (si hay destino configurado) |
 
 Los horarios usan la zona horaria de NY, así que los cambios de horario de verano de EE. UU.

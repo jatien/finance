@@ -103,9 +103,19 @@ class UniverseProvider(ABC):
     def constituents(self, universe: str) -> pd.DataFrame:
         """Columnes: symbol, name, sector, sub_industry, headquarters, date_added, cik."""
 
+
+
+class IndexHistoryProvider(ABC):
+    """Historial de composició d'un índex: el conjunt de membres vigent a cada data de canvi."""
+
+    name: str
+
     @abstractmethod
-    def changes(self, universe: str) -> pd.DataFrame:
-        """Columnes: date, added_symbol, added_name, removed_symbol, removed_name, reason."""
+    def membership_history(self, universe: str) -> list[tuple[date, frozenset[str]]]:
+        """Llista ordenada de (data, membres) amb símbols en convenció Yahoo.
+
+        Cada conjunt és vigent des de la seva data fins a la següent (exclosa).
+        """
 
 
 class InstrumentProvider(ABC):

@@ -174,7 +174,9 @@ def options_count_drop(con, p):
 # Macro
 # ---------------------------------------------------------------------------------------
 
-MAX_AGE_DAYS = {"D": 10, "W": 21, "M": 75, "Q": 200}
+# Dies màxims des de la data de l'última observació (inclou el retard de publicació:
+# una dada mensual de l'1-ago es publica a mitjan setembre o més tard)
+MAX_AGE_DAYS = {"D": 10, "W": 21, "M": 100, "Q": 200}
 
 
 def macro_stale(con, p):

@@ -47,6 +47,12 @@ class DatasetSpec:
     dedup_order: tuple[str, ...] = ("ingested_at",)
     audit: bool = True
     tags: dict[str, str] = field(default_factory=dict)
+    # Dataset que es regenera sencer a cada execució per aquestes claus: la vista només
+    # conserva les files de l'última ingesta de cada grup (evita "fantasmes" si la font
+    # corregeix l'històric).
+    snapshot_by: tuple[str, ...] | None = None
+    # Filtre SQL addicional de la vista (pot referenciar `<name>_raw`)
+    view_filter: str | None = None
 
     @property
     def schema(self) -> pa.Schema:
@@ -174,6 +180,11 @@ MACRO_OBSERVATIONS = DatasetSpec(
     ],
     primary_key=("series_id", "date", "realtime_start"),
     sort_by=("series_id", "date", "realtime_start"),
+    # Si una sèrie ja té vintages reals, s'ignoren les files carregades sense clau API
+    view_filter=(
+        "coalesce(vintage_mode, '') = 'alfred' OR series_id NOT IN "
+        "(SELECT DISTINCT series_id FROM macro_observations_raw WHERE vintage_mode = 'alfred')"
+    ),
 )
 
 UNIVERSE_MEMBERSHIP = DatasetSpec(
@@ -199,8 +210,8 @@ INDEX_CHANGES = DatasetSpec(
     name="index_changes",
     path="index_changes",
     description=(
-        "Altes i baixes històriques d'un índex. Permet reconstruir la composició passada "
-        "i evitar el biaix de supervivència als backtests."
+        "Altes i baixes d'un índex derivades de l'historial de composició "
+        "(una fila per símbol que entra o surt; l'altre costat és \"\")."
     ),
     fields=[
         pa.field("universe", pa.string(), nullable=False),
@@ -213,6 +224,34 @@ INDEX_CHANGES = DatasetSpec(
     ],
     primary_key=("universe", "date", "added_symbol", "removed_symbol"),
     sort_by=("universe", "date"),
+    snapshot_by=("universe",),
+)
+
+UNIVERSE_INTERVALS = DatasetSpec(
+    name="universe_intervals",
+    path="universe_intervals",
+    description=(
+        "Intervals de pertinença a un índex [start_date, end_date). Combina l'historial "
+        "extern (des de 1996) amb les fotos pròpies posteriors. Base de `universe_asof` i "
+        "de la correcció del biaix de supervivència."
+    ),
+    fields=[
+        pa.field("universe", pa.string(), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("start_date", pa.date32(), nullable=False),
+        pa.field("end_date", pa.date32()),  # exclusiu; NULL = encara és membre
+        # True = ja era membre abans del començament de l'historial disponible
+        pa.field("start_censored", pa.bool_(), nullable=False),
+        # Dies d'incertesa: el canvi es va produir dins dels N dies anteriors (0 = data exacta).
+        # La data guardada és la d'observació (conservadora: mai abans de saber-ho).
+        pa.field("start_window_days", pa.int32(), nullable=False),
+        pa.field("end_window_days", pa.int32()),
+        pa.field("start_source", pa.string(), nullable=False),
+        pa.field("end_source", pa.string()),
+    ],
+    primary_key=("universe", "symbol", "start_date"),
+    sort_by=("universe", "symbol", "start_date"),
+    snapshot_by=("universe",),
 )
 
 INSTRUMENTS = DatasetSpec(
@@ -292,7 +331,8 @@ REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
         PRICES_DAILY, CORPORATE_ACTIONS, OPTION_SNAPSHOTS, MACRO_OBSERVATIONS,
-        UNIVERSE_MEMBERSHIP, INDEX_CHANGES, INSTRUMENTS, INGEST_RUNS, DQ_RESULTS,
+        UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
+        DQ_RESULTS,
     )
 }
 

@@ -25,9 +25,13 @@ El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture
 - **Cadenas de opciones completas** de 21 subyacentes (índices + sectores), 3 fotos por
   sesión. Yahoo no da histórico de opciones: cada foto acumula un activo que no se puede
   recuperar después.
-- **Macro (FRED)**: curva de tipos, spreads de crédito, condiciones financieras, empleo,
-  inflación... con vintages point-in-time.
-- **Composición del S&P 500** con sector/subindustria GICS, fotografiada semanalmente.
+- **Macro (FRED/ALFRED)**: curva de tipos, spreads de crédito, condiciones financieras,
+  empleo, inflación... Las series revisables guardan todas sus versiones (vintages): p. ej.
+  el empleo de marzo de 2020 se publicó como −701k y hoy figura como −1,40M; un backtest
+  ve la cifra que existía en cada fecha.
+- **Composición histórica del S&P 500 desde 1996** (altas y bajas, ~1.200 tickers) a partir
+  de [fja05680/sp500](https://github.com/fja05680/sp500), enlazada con fotos semanales
+  propias de Wikipedia (con sector/subindustria GICS) para el tramo reciente.
 - **Metadatos** de instrumentos (sector, industria, categoría de fondo, tamaño, beta).
 
 Todo con esquema validado, auditoría por fila (`source`, `ingested_at`, `run_id`) y un
@@ -42,7 +46,8 @@ uv sync --extra dev                                # crea .venv con Python 3.13
 cp .env.example .env                               # ajusta FIN_DATA_DIR y FIN_FRED_API_KEY
 
 uv run fin init
-uv run fin ingest universe                         # S&P 500
+uv run fin ingest universe                         # S&P 500 actual (Wikipedia)
+uv run fin ingest universe-history                 # historial de composición desde 1996
 uv run fin run daily                               # precios + macro + calidad (~5 min la primera vez)
 uv run fin ingest options --force                  # foto de opciones (fuera de horario: --force)
 uv run fin status
@@ -62,8 +67,11 @@ px = ctx.query("""
     WHERE symbol IN ('XLK','XLE','XLF') AND date >= '2020-01-01'
 """).pivot(index="date", columns="symbol", values="adj_close")
 
-# Lo que se sabía de las nóminas el 15-mar-2020 (sin look-ahead)
-ctx.query("SELECT * FROM macro_asof(DATE '2020-03-15') WHERE series_id = 'PAYEMS'")
+# Lo que se sabía de las nóminas el 10-abr-2020 (sin look-ahead)
+ctx.query("SELECT * FROM macro_asof(DATE '2020-04-10') WHERE series_id = 'PAYEMS'")
+
+# Miembros del S&P 500 el día de la quiebra de Lehman (incluye LEHMQ, AIG, BSC ya fuera...)
+ctx.query("SELECT * FROM universe_asof('sp500', DATE '2008-09-15')")
 ```
 
 ## Servidor

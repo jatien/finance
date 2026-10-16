@@ -88,26 +88,3 @@ class WikipediaIndex(UniverseProvider):
                     raise ProviderError(f"{universe}: només {len(out)} membres; format canviat?")
                 return out.reset_index(drop=True)
         raise ProviderError(f"{universe}: no s'ha trobat la taula de membres")
-
-    def changes(self, universe: str) -> pd.DataFrame:
-        tables = self._tables(universe)
-        for t in tables:
-            cols = _flatten(t.columns)
-            if any(c.startswith("added") for c in cols) and any(c.startswith("removed") for c in cols):
-                t = t.copy()
-                t.columns = cols
-                def pick(key: str, cols: list[str] = cols) -> str | None:
-                    return _pick(cols, key, prefix=True)
-                date_col = next(c for c in cols if "date" in c)
-                out = pd.DataFrame({
-                    "date": pd.to_datetime(t[date_col], errors="coerce", format="mixed").dt.date,
-                    "added_symbol": _clean_str(t[pick("added ticker")]).fillna(""),
-                    "added_name": _clean_str(t[pick("added security")]),
-                    "removed_symbol": _clean_str(t[pick("removed ticker")]).fillna(""),
-                    "removed_name": _clean_str(t[pick("removed security")]),
-                    "reason": _clean_str(t[pick("reason")]) if pick("reason") else pd.NA,
-                })
-                out = out.dropna(subset=["date"])
-                out = out[(out["added_symbol"] != "") | (out["removed_symbol"] != "")]
-                return out.reset_index(drop=True)
-        raise ProviderError(f"{universe}: no s'ha trobat la taula de canvis")

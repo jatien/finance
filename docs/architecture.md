@@ -31,7 +31,8 @@ src/finance/
 │   ├── base.py        PriceProvider, OptionChainProvider, MacroProvider, UniverseProvider...
 │   ├── yahoo.py       precios, acciones corporativas, cadenas de opciones, metadatos
 │   ├── fred.py        series macro con vintages (ALFRED) o sin clave (fredgraph)
-│   ├── wikipedia.py   composición del S&P 500 con GICS
+│   ├── wikipedia.py   composición actual del S&P 500 con GICS
+│   ├── sp500_history.py  historial de composición desde 1996 (fja05680/sp500)
 │   └── ratelimit.py   token bucket compartido + reintentos con backoff exponencial
 ├── storage/
 │   ├── schemas.py     registro de datasets: esquema Arrow, clave primaria, partición
@@ -67,8 +68,13 @@ parámetros, errores por símbolo y versión del código — commit de git).
 fecha simulada son la causa más común de resultados falsos. Por eso:
 - Las series macro revisables guardan todos sus vintages (`realtime_start`/`realtime_end`)
   y `macro_asof(fecha)` devuelve lo que se sabía en esa fecha.
-- La composición del S&P 500 se fotografía semanalmente; `universe_asof('sp500', fecha)`
-  devuelve la composición vigente (sesgo de supervivencia).
+- Composición histórica del S&P 500 (sesgo de supervivencia): `universe_intervals` combina
+  el historial externo desde 1996 con las fotos semanales propias posteriores a su última
+  fecha. `universe_asof('sp500', fecha)` devuelve los miembros vigentes. Los cambios vistos
+  solo entre dos fotos se fechan el día en que se observaron (conservador) y guardan la
+  anchura de la ventana de incertidumbre (`start_window_days`/`end_window_days`). El
+  sector viene de la foto propia más cercana: para fechas antiguas es la clasificación GICS
+  actual (aproximación; p. ej. GOOGL figura en Communication Services en 2008).
 - Nunca se guarda la barra de la sesión en curso (sería parcial).
 
 **Ajuste por dividendos.** Yahoo da `close` (ajustado solo por splits) y `adj_close`
@@ -81,6 +87,13 @@ corporativas se guardan aparte para poder reconstruir retornos totales propios.
 expiraciones hasta ~2 años y todos los strikes) con un `snapshot_ts` común. Es la base para
 superficies de volatilidad, skew, term structure y posicionamiento (open interest). Yahoo
 no ofrece histórico de opciones: el valor de este dataset crece con cada día capturado.
+
+**Datasets regenerados (`snapshot_by`).** Los derivados de una fuente que puede corregir
+su pasado (historial del índice) se reescriben enteros en cada ejecución; la vista solo
+muestra la última ingesta, así una fecha corregida no deja intervalos fantasma.
+
+**Paso a vintages sin migraciones.** Si una serie macro se cargó sin clave de FRED y luego
+con ella, la vista descarta automáticamente las filas sin vintages de esa serie.
 
 **Proveedores intercambiables.** Los jobs solo conocen las interfaces de `providers/base.py`.
 Pasar a una fuente profesional (Polygon, Tiingo, IBKR, Databento, ORATS para opciones) es
@@ -100,7 +113,8 @@ ejecución queda como `partial` con el error registrado.
 | `option_snapshots` | contract_symbol, snapshot_ts | snapshot_date | cadenas completas + cotización del subyacente |
 | `macro_observations` | series_id, date, realtime_start | — | series FRED con vintages |
 | `universe_membership` | universe, as_of_date, symbol | — | fotos de composición (S&P 500 + GICS) |
-| `index_changes` | universe, date, added, removed | — | altas/bajas históricas (si la fuente las da) |
+| `universe_intervals` | universe, symbol, start_date | — | pertenencia [inicio, fin) desde 1996; se regenera entera cada semana |
+| `index_changes` | universe, date, added, removed | — | altas/bajas derivadas del historial |
 | `instruments` | symbol, as_of_date | — | sector, industria, categoría de fondo, tamaño, beta |
 | `ingest_runs` | run_id | — | registro de cada ejecución |
 | `dq_results` | run_id, dataset, check_name, key | — | violaciones de calidad |

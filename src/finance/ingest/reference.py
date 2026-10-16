@@ -7,13 +7,12 @@ from typing import Any
 import pandas as pd
 
 from finance.jobs import Job, Run, run_concurrently
-from finance.providers import ProviderError
-from finance.storage.schemas import INDEX_CHANGES, INSTRUMENTS, UNIVERSE_MEMBERSHIP
+from finance.storage.schemas import INSTRUMENTS, UNIVERSE_MEMBERSHIP
 from finance.universe import to_yahoo_symbol
 
 
 class UniverseJob(Job):
-    """Foto dels membres actuals + historial d'altes/baixes (contra el biaix de supervivència)."""
+    """Foto dels membres actuals amb GICS. L'historial el construeix `UniverseHistoryJob`."""
 
     name = "universe"
 
@@ -33,18 +32,6 @@ class UniverseJob(Job):
             except Exception as e:  # noqa: BLE001
                 run.fail(f"{uni} membres", e)
                 continue
-            try:
-                ch = provider.changes(uni)
-                for c in ("added_symbol", "removed_symbol"):
-                    ch[c] = ch[c].map(lambda s: to_yahoo_symbol(s) if s else "")
-                ch["universe"] = uni
-                run.write(INDEX_CHANGES, ch, provider.name)
-            except ProviderError as e:
-                # No crític: les fotos periòdiques de membres ja construeixen l'historial
-                run.message = f"{uni}: historial de canvis no disponible ({e})"
-                self.log.warning(run.message)
-            except Exception as e:  # noqa: BLE001
-                run.fail(f"{uni} canvis", e)
         # El univers dinàmic ha canviat: invalidar la memòria cau del context
         self.ctx._universe = None
 

@@ -12,14 +12,15 @@ from finance.ingest.maintenance import CompactJob
 from finance.ingest.options import OptionsJob
 from finance.ingest.prices import PricesJob
 from finance.ingest.reference import InstrumentsJob, UniverseJob
+from finance.ingest.universe_history import UniverseHistoryJob
 from finance.jobs import Context, Job, RunReport
 from finance.quality.checks import QualityJob
 
 log = logging.getLogger(__name__)
 
 JOBS: dict[str, type[Job]] = {
-    j.name: j for j in (PricesJob, OptionsJob, MacroJob, UniverseJob, InstrumentsJob,
-                        QualityJob, CompactJob)
+    j.name: j for j in (PricesJob, OptionsJob, MacroJob, UniverseJob, UniverseHistoryJob,
+                        InstrumentsJob, QualityJob, CompactJob)
 }
 
 UNIVERSE_MAX_AGE = timedelta(days=7)
@@ -43,6 +44,7 @@ def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
     reports = []
     if universe_is_stale(ctx):
         reports.append(run_job(ctx, "universe", refresh_catalog=False))
+        reports.append(run_job(ctx, "universe_history", refresh_catalog=False))
     reports.append(run_job(ctx, "prices", refresh_catalog=False, full=full))
     reports.append(run_job(ctx, "macro", refresh_catalog=False, full=full))
     reports.append(run_job(ctx, "dq", refresh_catalog=False))
@@ -51,9 +53,10 @@ def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
 
 
 def weekly_pipeline(ctx: Context) -> list[RunReport]:
-    """Manteniment setmanal: univers, metadades d'instruments, compactació completa."""
+    """Manteniment setmanal: univers, historial de composició, metadades, compactació completa."""
     return [
         run_job(ctx, "universe", refresh_catalog=False),
+        run_job(ctx, "universe_history", refresh_catalog=False),
         run_job(ctx, "instruments", refresh_catalog=False),
         run_job(ctx, "compact", min_files=2),
     ]

@@ -167,8 +167,12 @@ macro:
   T10YIE: { name: "Breakeven inflation 10Y", frequency: D, revisable: false }
   DFF: { name: "Fed funds effective", frequency: D, revisable: false }
   # Crèdit i estrès financer
-  BAMLH0A0HYM2: { name: "HY OAS", frequency: D, revisable: false }
-  BAMLC0A0CM: { name: "IG OAS", frequency: D, revisable: false }
+  # ICE BofA: des d'abril de 2026 FRED només en publica els últims 3 anys. Com que el lake
+  # és append-only, l'històric s'acumula a partir d'ara; per a backtests llargs, Moody's.
+  BAMLH0A0HYM2: { name: "HY OAS (ICE BofA, 3 anys a FRED)", frequency: D, revisable: false }
+  BAMLC0A0CM: { name: "IG OAS (ICE BofA, 3 anys a FRED)", frequency: D, revisable: false }
+  BAA10Y: { name: "Moody's Baa - Treasury 10Y (des de 1986)", frequency: D, revisable: false }
+  AAA10Y: { name: "Moody's Aaa - Treasury 10Y (des de 1983)", frequency: D, revisable: false }
   NFCI: { name: "Chicago Fed financial conditions", frequency: W, revisable: true }
   STLFSI4: { name: "St. Louis Fed financial stress", frequency: W, revisable: true }
   VIXCLS: { name: "VIX close (FRED)", frequency: D, revisable: false }

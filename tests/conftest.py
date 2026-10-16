@@ -13,6 +13,7 @@ import pytest
 from finance.jobs import Context
 from finance.providers import (
     ChainSlice,
+    IndexHistoryProvider,
     InstrumentProvider,
     MacroProvider,
     OptionChainProvider,
@@ -148,8 +149,25 @@ class FakeUniverse(UniverseProvider):
                              "date_added": [date(1982, 11, 30), date(2010, 2, 16)],
                              "cik": ["0000320193", "0001067983"]})
 
-    def changes(self, universe):
-        raise ProviderError("sense taula de canvis")
+
+
+class FakeIndexHistory(IndexHistoryProvider):
+    """Historial extern fins al 2026-08-18: BRK-B entra el 2010, OLD surt el 2020."""
+
+    name = "fake_history"
+
+    def __init__(self):
+        self.history = [
+            (date(1996, 1, 2), frozenset({"AAPL", "OLD"})),
+            (date(2010, 2, 16), frozenset({"AAPL", "OLD", "BRK-B"})),
+            (date(2020, 6, 22), frozenset({"AAPL", "BRK-B"})),
+            (date(2026, 8, 18), frozenset({"AAPL", "BRK-B", "GONE"})),
+        ]
+
+    def membership_history(self, universe):
+        if universe != "sp500":
+            raise ProviderError("univers desconegut")
+        return list(self.history)
 
 
 class FakeInstruments(InstrumentProvider):
@@ -160,10 +178,14 @@ class FakeInstruments(InstrumentProvider):
 
 
 class Clock:
+    """Rellotge simulat. Avança 1 µs a cada lectura: dues execucions mai comparteixen
+    `ingested_at`, igual que en producció."""
+
     def __init__(self, ts: str):
         self.ts = pd.Timestamp(ts, tz="UTC")
 
     def __call__(self) -> pd.Timestamp:
+        self.ts += pd.Timedelta(microseconds=1)
         return self.ts
 
     def set(self, ts: str) -> None:
@@ -181,7 +203,7 @@ def providers() -> Providers:
     prices = FakePrices(histories={s: make_history(s, seed=i) for i, s in
                                    enumerate(["SPY", "XLK", "AAPL", "BRK-B"])})
     return Providers(prices=prices, options=FakeOptions(), instruments=FakeInstruments(),
-                     macro=FakeMacro(), universe=FakeUniverse())
+                     macro=FakeMacro(), universe=FakeUniverse(), index_history=FakeIndexHistory())
 
 
 @pytest.fixture

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from finance.providers.base import (
     ChainSlice,
     FetchResult,
+    IndexHistoryProvider,
     InstrumentProvider,
     MacroProvider,
     OptionChainProvider,
@@ -27,10 +28,12 @@ class Providers:
     instruments: InstrumentProvider
     macro: MacroProvider
     universe: UniverseProvider
+    index_history: IndexHistoryProvider
 
 
 def build_providers(settings: Settings) -> Providers:
     from finance.providers.fred import make_fred
+    from finance.providers.sp500_history import Fja05680History
     from finance.providers.wikipedia import WikipediaIndex
     from finance.providers.yahoo import YahooInstruments, YahooOptions, YahooPrices
 
@@ -42,11 +45,12 @@ def build_providers(settings: Settings) -> Providers:
         instruments=YahooInstruments(yahoo_limiter),
         macro=make_fred(settings.fred_api_key, settings.fred_rate_per_sec),
         universe=WikipediaIndex(),
+        index_history=Fja05680History(),
     )
 
 
 __all__ = [
-    "ChainSlice", "FetchResult", "InstrumentProvider", "MacroProvider", "OptionChainProvider",
+    "ChainSlice", "FetchResult", "IndexHistoryProvider", "InstrumentProvider", "MacroProvider", "OptionChainProvider",
     "PriceProvider", "ProviderError", "Providers", "TransientProviderError", "UnderlyingQuote",
     "UniverseProvider", "build_providers",
 ]

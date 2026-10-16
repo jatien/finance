@@ -49,8 +49,15 @@ def raw_view_sql(lake: Lake, spec: DatasetSpec) -> str:
 def dedup_view_sql(spec: DatasetSpec) -> str:
     pk = ", ".join(f'"{c}"' for c in spec.primary_key)
     order = ", ".join(f'"{c}" DESC' for c in spec.dedup_order)
-    return (f"SELECT * FROM {spec.name}_raw "
-            f"QUALIFY row_number() OVER (PARTITION BY {pk} ORDER BY {order}) = 1")
+    sql = (f"SELECT * FROM {spec.name}_raw "
+           f"QUALIFY row_number() OVER (PARTITION BY {pk} ORDER BY {order}) = 1")
+    if spec.snapshot_by:
+        grp = ", ".join(f'"{c}"' for c in spec.snapshot_by)
+        sql = (f"SELECT * FROM ({sql}) "
+               f"QUALIFY ingested_at = max(ingested_at) OVER (PARTITION BY {grp})")
+    if spec.view_filter:
+        sql = f"SELECT * FROM ({sql}) WHERE {spec.view_filter}"
+    return sql
 
 
 # Vistes derivades (depenen de les vistes base)
@@ -99,13 +106,39 @@ MACROS: dict[str, str] = {
         FROM macro_observations
         WHERE realtime_start <= at_date AND realtime_end >= at_date
     """,
-    # Composició d'un univers vigent a `at_date` segons la foto més propera anterior
+    # Composició d'un univers vigent a `at_date`.
+    # Font principal: intervals de pertinença (historial des de 1996 + fotos pròpies).
+    # Sector/nom: de la foto pròpia més propera (anterior si n'hi ha; si no, la primera
+    # posterior — classificació GICS actual, aproximació per a dates antigues).
+    # Si no hi ha intervals per a l'univers, es fa servir la foto anterior més propera.
     "universe_asof": """
         (uni, at_date) AS TABLE
-        SELECT * FROM universe_membership
-        WHERE universe = uni
-          AND as_of_date = (SELECT max(as_of_date) FROM universe_membership
-                            WHERE universe = uni AND as_of_date <= at_date)
+        WITH m AS (
+            SELECT symbol, start_date, start_source FROM universe_intervals
+            WHERE universe = uni AND start_date <= at_date
+              AND (end_date IS NULL OR end_date > at_date)
+        ), s AS (
+            SELECT symbol, name, sector, sub_industry FROM universe_membership
+            WHERE universe = uni
+            QUALIFY row_number() OVER (
+                PARTITION BY symbol
+                ORDER BY (as_of_date <= at_date) DESC,
+                         abs(date_diff('day', as_of_date, CAST(at_date AS DATE)))) = 1
+        ), snap AS (
+            SELECT * FROM universe_membership
+            WHERE universe = uni
+              AND as_of_date = (SELECT max(as_of_date) FROM universe_membership
+                                WHERE universe = uni AND as_of_date <= at_date)
+        )
+        SELECT uni AS universe, CAST(at_date AS DATE) AS as_of_date, m.symbol, s.name,
+               s.sector, s.sub_industry, m.start_date AS member_since,
+               m.start_source AS history_source
+        FROM m LEFT JOIN s USING (symbol)
+        UNION ALL
+        SELECT universe, CAST(at_date AS DATE), symbol, name, sector, sub_industry,
+               date_added, 'snapshot'
+        FROM snap
+        WHERE NOT EXISTS (SELECT 1 FROM universe_intervals WHERE universe = uni)
     """,
 }
 

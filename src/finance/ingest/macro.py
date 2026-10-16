@@ -37,11 +37,16 @@ class MacroJob(Job):
             self.log.warning("FIN_FRED_API_KEY no definida: les sèries revisables no tindran vintages")
 
         state = ctx.query("""
-            SELECT series_id, max(date) AS last_date, max(ingested_at) AS last_ingested
+            SELECT series_id, max(date) AS last_date,
+                   max(ingested_at) FILTER (WHERE vintage_mode = 'alfred') AS last_vintage_ingest
             FROM macro_observations GROUP BY series_id
         """)
         last_date = dict(zip(state["series_id"], pd.to_datetime(state["last_date"]).dt.date, strict=True))
-        last_ing = dict(zip(state["series_id"], pd.to_datetime(state["last_ingested"]).dt.date, strict=True))
+        # Només compta com a "ja carregada amb vintages" si hi ha files ALFRED: una sèrie
+        # carregada abans sense clau API es torna a baixar sencera amb vintages.
+        vint_state = state.dropna(subset=["last_vintage_ingest"])
+        last_ing = dict(zip(vint_state["series_id"],
+                            pd.to_datetime(vint_state["last_vintage_ingest"]).dt.date, strict=True))
 
         def work(s: MacroSeries) -> pd.DataFrame:
             vint = s.revisable and provider.supports_vintages
