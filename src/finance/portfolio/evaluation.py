@@ -108,7 +108,7 @@ def holdings_summary(sim: SimResult, inp: PortfolioInputs, start: pd.Timestamp) 
 
 def review_summary(log: pd.DataFrame, start: pd.Timestamp) -> dict[str, float]:
     lg = log.loc[start:]
-    lg = lg[lg["sectors"] != ""]
+    lg = lg[lg["hedge"] != "sense canvis"]
     years = max((lg.index.max() - lg.index.min()).days / 365.25, 1e-9) if len(lg) else np.nan
     return {
         "revisions": len(lg),

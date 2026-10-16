@@ -99,3 +99,47 @@ Episodios: crisis financiera **+5,7 %** (SPY −55 %), Covid −3,2 % (SPY −34
   momentum suele ser más persistente.
 - Cobertura con una señal de correlación más rápida (21 sesiones) o con el nivel de la
   inflación, para evitar el caso 2022.
+
+## `rot_v2`: construcción condicionada al régimen (semana 6)
+
+### Pre-registro
+
+Escrito y confirmado en git **antes** de ejecutar ningún backtest de `rot_v2`. Las reglas
+salen de las hipótesis anteriores (que sí se formularon mirando 2000–2026 con `rot_v1`), así
+que ninguna ventana histórica es una validación limpia; la única fuera de muestra real es el
+paper trading desde el 16-oct-2026. Lo que este protocolo sí evita es ajustar `rot_v2` a sus
+propios resultados.
+
+En `rot_v1`, el régimen solo decide *cuánto* riesgo (E). En `rot_v2` también decide *cómo* se
+construye el bloque de renta variable:
+
+```
+objetivo_t = E_t · [c_r · SPY + (1 − c_r) · satélite_r] + (1 − E_t) · cobertura_t
+```
+
+| Tendencia | Núcleo SPY `c` | Satélite (top-3, pesos inversos a la vol) | Motivo |
+|---|---|---|---|
+| alcista | 70 % | momentum 12-1 **sin dividir por vol** + 0,25 · fuerza relativa 6 m; solo sectores con momentum 12-1 > 0 (las plazas vacías van a SPY) | La selección de `rot_v1` restaba frente a SPY y se inclinaba a defensivos en mercados alcistas |
+| bajista | 50 % | puntuación defensiva de `rot_v1` (riesgo + beta baja) | La inclinación defensiva fue lo que funcionó en 2000–2009 |
+| crisis | — | E = 0: todo en cobertura | Sin cambios |
+
+- **E** sigue siendo `rules_v1` (100/75/50/25/0 %). Cambiar la exposición es trabajo de la
+  capa 3 (`rules_v2`); aquí se aísla el efecto de la construcción.
+- **Cobertura**: IEF solo si la correlación SPY–TLT es negativa a 3 meses **y** a 1 mes (21
+  sesiones); si no, 50 % oro + 50 % efectivo. Motivo: el caso de 2022.
+- Sin cambios: revisión mensual y en cada cambio de régimen, filtro de correlación 0,80,
+  banda del 2 %, 5 pb.
+
+**Protocolo de evaluación** (fijado de antemano):
+
+1. Una sola ejecución con la configuración `ROT_V2` de `portfolio/config.py`. Cualquier
+   cambio posterior es `rot_v3`.
+2. Ventanas: completa (2000-01 → 2026-10), *diseño* 2000–2015 y *comprobación* 2016–2026.
+3. Ablaciones que aíslan cada pieza: sin núcleo, sin filtro de momentum absoluto,
+   puntuación de `rot_v1` en alcista, cobertura de `rot_v1` y **sin condicionar** (la regla
+   alcista en todos los regímenes). La última responde a la pregunta de la semana: ¿aporta
+   algo que la construcción dependa del régimen?
+4. `rot_v2` se considera mejor que `rot_v1` solo si mejora el Sharpe **y** no empeora la caída
+   máxima en más de 3 puntos, en las dos ventanas. Si no, se registra como resultado
+   negativo y las dos estrategias siguen en paper trading.
+5. Las dos (`rot_v1` y `rot_v2`) se escriben cada día en `portfolio_targets` desde ya.

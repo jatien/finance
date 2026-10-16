@@ -7,7 +7,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from finance.features.config import FeatureConfig
 from finance.features.inputs import load_prices
+from finance.features.transforms import rolling_corr
 from finance.features.job import read_market_features, read_sector_features
 from finance.jobs import Job, Run
 from finance.portfolio.config import CASH, PortfolioConfig
@@ -23,7 +25,8 @@ def load_inputs(ctx, cfg: PortfolioConfig | None = None) -> PortfolioInputs:
     if regime.empty:
         raise RuntimeError(f"sense règims '{cfg.regime_set}': executa `fin regimes build`")
     sectors = [i.symbol for i in ctx.universe.group(cfg.sector_group)]
-    px = load_prices(ctx, [cfg.market, *sectors, cfg.bond_hedge, cfg.gold])
+    long_bond = FeatureConfig().long_bond
+    px = load_prices(ctx, list(dict.fromkeys([cfg.market, *sectors, cfg.bond_hedge, cfg.gold, long_bond])))
     if px.empty or cfg.market not in px:
         raise RuntimeError(f"sense preus de {cfg.market}")
     px = px.loc[px[cfg.market].notna()].ffill(limit=3)
@@ -40,9 +43,18 @@ def load_inputs(ctx, cfg: PortfolioConfig | None = None) -> PortfolioInputs:
         panel[f] = w.reindex(index=idx, columns=sectors)
     mkt = read_market_features(ctx, cfg.feature_set, "value")
     sb = mkt["stock_bond_corr_3m"].reindex(idx) if "stock_bond_corr_3m" in mkt else pd.Series(np.nan, index=idx)
+    fast = {}
+    if cfg.hedge_fast_window:
+        if long_bond in px and px[long_bond].notna().any():
+            fast[cfg.hedge_fast_window] = rolling_corr(px[cfg.market], px[long_bond], cfg.hedge_fast_window)
+        else:
+            notes.append(f"sense preus de {long_bond}: la cobertura no té confirmació ràpida")
+    if long_bond not in (cfg.market, *sectors, cfg.bond_hedge, cfg.gold):
+        px = px.drop(columns=long_bond, errors="ignore")
     return PortfolioInputs(prices=px, cash_ret=cash_returns(ctx, idx, notes),
                            regime=regime.reindex(idx), panel=panel, stock_bond_corr=sb,
-                           sectors=[s for s in sectors if s in px], notes=notes)
+                           sectors=[s for s in sectors if s in px], notes=notes,
+                           stock_bond_corr_fast=fast)
 
 
 def sleeve_of(symbol: str, cfg: PortfolioConfig) -> str:
@@ -50,6 +62,8 @@ def sleeve_of(symbol: str, cfg: PortfolioConfig) -> str:
         return "cash"
     if symbol in (cfg.bond_hedge, cfg.gold):
         return "cobertura"
+    if symbol == cfg.market:
+        return "nucli"
     return "renda_variable"
 
 
