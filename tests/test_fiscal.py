@@ -198,3 +198,23 @@ def test_accumulate_sells_on_crisis(inp):  # noqa: F811
     eq = [s for s in ("XLK", "XLF", "XLE", "XLP", "XLU", "XLV", "SPY")]
     held_eq = sum(r.ledger.shares(s) for s in eq)
     assert held_eq == 0  # liquidat al final
+
+
+def test_buy_and_hold_without_cash_column_invests(inp):  # noqa: F811
+    from finance.portfolio.construct import fixed_targets
+    idx = inp.index
+    md = MarketData(px=inp.prices.copy(), cash_rate=pd.Series(0.0, index=idx), fx=pd.Series(1.0, index=idx))
+    T = fixed_targets(idx, {"SPY": 1.0}, monthly=False, start=idx[250])
+    inv = Investor()
+    r = simulate_tax("spy", inp, T, ROT_V1B, md, inv, Policy("target"), idx[300])
+    months = pd.Series(r.value.index.to_period("M")).nunique()
+    assert r.info["contributed"] == pytest.approx(inv.initial + inv.monthly * (months - 1))
+    buys = r.orders[r.orders["amount"] > 0]
+    assert set(buys["symbol"]) == {"SPY"} and len(buys) >= months - 2
+    assert (r.orders["amount"] < 0).sum() == 1  # només la liquidació final
+    assert r.summary()["aportat"] == pytest.approx(r.info["contributed"])
+
+
+def test_ucits_ter_units_guard():
+    with pytest.raises(ValueError):
+        Ucits("x", None, None, ter=0.0015, us_ter=0.0945)

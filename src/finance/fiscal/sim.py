@@ -100,12 +100,16 @@ class TaxSimResult:
     info: dict[str, Any] = field(default_factory=dict)
 
     def summary(self) -> dict[str, Any]:
-        contrib = -self.flows[self.flows < 0].sum() - self.taxes["tax"].sum()
+        contrib = self.info.get("contributed", np.nan)
         tw = self.twr.dropna()
         eq = (1 + tw).cumprod()
         years = len(tw) / 252
+        alt = self.flows.copy()
+        if "value_before_liquidation" in self.info:  # sense vendre al final (impost latent no pagat)
+            alt.iloc[-1] += self.info["value_before_liquidation"] - self.final_net
         return {
             "estrategia": self.name, "TIR_neta_%": 100 * irr(self.flows),
+            "TIR_sense_liquidar_%": 100 * irr(alt),
             "valor_final_net": self.final_net, "aportat": contrib,
             "impostos": float(self.taxes["tax"].sum()), "comissions": float(self.orders["fee"].sum()),
             "ordres_any": len(self.orders) / max(years, 1e-9),
@@ -151,6 +155,8 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
     days = idx[(idx >= pd.Timestamp(start)) & (idx <= end)]
     assets = [a for a in T.weights.columns if a != CASH]
     W = T.weights.reindex(columns=[*assets, CASH])
+    if CASH not in T.weights.columns:  # objectius sense efectiu explícit (p. ex. 100 % SPY)
+        W[CASH] = W[assets].notna().all(axis=1).map({True: 0.0, False: np.nan})
     trig = Trigger(cfg.rebalance, cfg.band, cfg.te_band)
     rets_usd = inp.asset_returns().reindex(columns=[*assets, CASH])
     equity = set(inp.sectors) | {cfg.market}
@@ -159,11 +165,21 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
     led = Ledger(investor.tax)
 
     cash = 0.0
+    funded = False
+    contributed = 0.0
     flows: dict[pd.Timestamp, float] = {}
     values, twr, orders, taxes = [], [], [], []
     last_tgt: np.ndarray | None = None
     prev_value: float | None = None
     started = False
+    # Objectiu vigent a l'inici: l'última revisió anterior (si no, s'esperaria a la següent)
+    prev_rev = T.reviews.loc[:days[0]].iloc[:-1]
+    prev_rev = prev_rev[prev_rev]
+    for t_rev in prev_rev.index[::-1]:
+        row0 = W.loc[t_rev].to_numpy(dtype=float)
+        if not np.isnan(row0).any():
+            last_tgt = row0
+            break
     rank_cache: dict[pd.Timestamp, dict[str, int]] = {}
     last_month = None
     settled_upto = days[0].year - 1
@@ -256,7 +272,7 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
         pxd = md.px.loc[d]
         gi = idx.get_loc(d)
         # 1) interessos de l'efectiu (RCM) i aportació mensual
-        if started and cash > 0:
+        if funded and cash > 0:
             if cash_ret is not None:
                 r_c = float(cash_ret.get(d, 0.0))
             else:
@@ -266,7 +282,8 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
             led.add_interest(interest, d)
         contrib = 0.0
         month = d.to_period("M")
-        if not started:
+        if not funded:
+            funded = True
             cash += investor.initial
             add_flow(d, -investor.initial)
             contrib = investor.initial
@@ -274,6 +291,7 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
             cash += investor.monthly
             add_flow(d, -investor.monthly)
             contrib = investor.monthly
+        contributed += contrib
         last_month = month
         # 2) impost de l'any anterior (juliol)
         if with_tax and d.month >= investor.tax.settle_month and settled_upto < d.year - 1:
@@ -324,6 +342,8 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
     # 4) liquidació final
     dl = days[-1]
     pxd = md.px.loc[dl]
+    value_before = cash + holdings_value(pxd).sum()
+    latent = sum(led.unrealized(a, pxd[a]) for a in led.lots)
     for a in list(led.lots):
         do_sell(a, led.shares(a) * pxd[a] + 1.0, dl, pxd[a])
     final_tax = 0.0
@@ -338,7 +358,9 @@ def simulate_tax(name: str, inp: PortfolioInputs, targets: Targets, cfg: Portfol
     tx = pd.DataFrame(taxes) if taxes else pd.DataFrame(columns=["year", "tax"])
     return TaxSimResult(name=name, value=pd.Series(values, index=days), twr=pd.Series(twr, index=days),
                         flows=fl, taxes=tx, orders=pd.DataFrame(orders, columns=["date", "symbol", "amount", "fee", "realized"]),
-                        final_net=final_net, ledger=led, info={"policy": policy.__dict__, "start": days[0]})
+                        final_net=final_net, ledger=led,
+                        info={"policy": policy.__dict__, "start": days[0], "contributed": contributed,
+                              "value_before_liquidation": value_before, "latent_gain": latent})
 
 
 def _accumulate_review(policy: Policy, cfg: PortfolioConfig, inp: PortfolioInputs, T: Targets, gi: int,

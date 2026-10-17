@@ -68,8 +68,12 @@ class Ucits:
     name: str
     xetra: str | None  # ticker a Xetra (EUR)
     isin: str | None  # None = no verificat: confirmar a IBKR abans d'operar
-    ter: float  # TER de l'UCITS
-    us_ter: float  # TER de l'ETF dels EUA que fem servir com a sèrie de preus
+    ter: float  # TER de l'UCITS (fracció: 0,0015 = 0,15 %)
+    us_ter: float  # TER de l'ETF dels EUA que fem servir com a sèrie de preus (fracció)
+
+    def __post_init__(self) -> None:
+        if not (0 <= self.ter < 0.02 and 0 <= self.us_ter < 0.02):
+            raise ValueError(f"{self.name}: TER fora de rang (s'expressa en fracció, no en %)")
     equity: bool = True  # la retenció del 15 % sobre dividends dels EUA només afecta accions
     wht: float = 0.15
 
@@ -80,7 +84,7 @@ class Ucits:
 
 # Sèrie dels EUA → UCITS. Sectors: SPDR S&P U.S. Select Sector UCITS ETF (Acc), mateixos índexs.
 UCITS_MAP: dict[str, Ucits] = {
-    "SPY": Ucits("iShares Core S&P 500 UCITS (Acc)", "SXR8", "IE00B5BMR087", 0.0007, 0.0945),
+    "SPY": Ucits("iShares Core S&P 500 UCITS (Acc)", "SXR8", "IE00B5BMR087", 0.0007, 0.000945),
     "XLK": Ucits("SPDR S&P U.S. Technology Select Sector UCITS (Acc)", "ZPDT", "IE00BWBXM948", 0.0015, 0.0008),
     "XLE": Ucits("SPDR S&P U.S. Energy Select Sector UCITS (Acc)", "ZPDE", "IE00BWBXM492", 0.0015, 0.0008),
     "XLV": Ucits("SPDR S&P U.S. Health Care Select Sector UCITS (Acc)", "ZPDH", "IE00BWBXM617", 0.0015, 0.0008),
