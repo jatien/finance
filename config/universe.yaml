@@ -179,6 +179,9 @@ macro:
   # Divises i matèries primeres
   DTWEXBGS: { name: "Trade-weighted USD broad", frequency: D, revisable: false }
   DCOILWTICO: { name: "WTI spot", frequency: D, revisable: false }
+  # Inversor a Espanya (setmana 9): l'IRPF es calcula en euros i l'efectiu és en euros
+  DEXUSEU: { name: "USD per EUR (des de 1999)", frequency: D, revisable: false }
+  ECBDFR: { name: "BCE: facilitat de dipòsit", frequency: D, revisable: false }
   # Cicle econòmic (revisables: vintages imprescindibles)
   ICSA: { name: "Initial jobless claims", frequency: W, revisable: true }
   UNRATE: { name: "Unemployment rate", frequency: M, revisable: true }
