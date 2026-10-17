@@ -60,8 +60,36 @@ no pitjor en més de 3 punts, a les finestres de disseny i de comprovació. {hea
 <h3>Episodis (%)</h3><div class="wrap">{_table(ep[keep], 1)}</div>"""
 
 
+def _bands_section(inp: PortfolioInputs, pairs: list[tuple[PortfolioConfig, PortfolioConfig]],
+                   with_sensitivity: bool) -> str:
+    """Secció de la setmana 7: bandes de no-negociació, ablacions i criteri pre-registrat."""
+    res = ev.bands_comparison(inp, pairs)
+    cols = ["estrategia", "CAGR_%", "vol_%", "sharpe", "max_dd_%", "calmar", "rotacio_anual", "operacions_any"]
+    windows = "".join(f"<h3>{k}</h3><div class='wrap'>{_table(t[cols])}</div>" for k, t in res["tables"].items())
+    verdict = res["verdict"].copy()
+    verdict["passa"] = verdict["passa"].map({True: "sí", False: "no", None: "—"})
+    status = []
+    for base, banded in pairs:
+        ok = ev.bands_pass(res["verdict"], f"{base.name} → {banded.name}")
+        status.append(f"{banded.name}: <b>{'passa' if ok else 'no passa' if ok is False else 'sense dades'}</b>")
+    ep = res["episodes"]
+    keep = ["episodi", "inici", "fi", *[n for p in pairs for n in (p[0].name, p[1].name)]]
+    sens_html = ""
+    if with_sensitivity:
+        sens = pd.concat([ev.bands_sensitivity(inp, b) for _, b in pairs], ignore_index=True)
+        sens_html = f"<h3>Sensibilitat (robustesa)</h3><div class='wrap'>{_table(sens)}</div>"
+    return f"""<h2>7. Bandes de no-negociació</h2>
+<p class="note">Pre-registre a docs/portfolio.md. Banda de rang (top-k + 2), disparador per tracking
+error de l'1 % comprovat cada sessió i histèresi de ±0,10 a la cobertura. Criteri: rotació −25 % o més i,
+a les dues finestres, Sharpe no més de 0,03 per sota i caiguda no més de 2 punts pitjor.
+{" · ".join(status)}.</p>
+<div class="wrap">{_table(verdict)}</div>{windows}
+<h3>Episodis (%)</h3><div class="wrap">{_table(ep[[c for c in keep if c in ep]], 1)}</div>{sens_html}"""
+
+
 def build_report(inp: PortfolioInputs, cfg: PortfolioConfig, path: Path, *, with_sensitivity: bool = True,
-                 cfg_v2: PortfolioConfig | None = None) -> Path:
+                 cfg_v2: PortfolioConfig | None = None,
+                 band_pairs: list[tuple[PortfolioConfig, PortfolioConfig]] | None = None) -> Path:
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
@@ -80,6 +108,7 @@ def build_report(inp: PortfolioInputs, cfg: PortfolioConfig, path: Path, *, with
     annual = ev.annual_returns(sims, CURVE_STRATEGIES, start).round(1).reset_index(names="any")
     sens = ev.sensitivity(inp, cfg) if with_sensitivity else pd.DataFrame()
     v2_html = _v2_section(inp, cfg, cfg_v2) if cfg_v2 is not None else ""
+    bands_html = _bands_section(inp, band_pairs, with_sensitivity) if band_pairs else ""
 
     # Cartera objectiu actual i últimes decisions --------------------------------------
     log = decision_log(main_t, cfg)
@@ -198,6 +227,7 @@ La cartera decidida al tancament de t guanya el retorn de t+1. Cash = T-bills 3M
 <div class="wrap">{_table(annual, 1)}</div>
 {sens_html}
 {v2_html}
+{bands_html}
 </body></html>"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(html, encoding="utf-8")

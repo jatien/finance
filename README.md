@@ -13,7 +13,7 @@ El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture
 | 2. Features: tendencia, volatilidad, amplitud, crédito, correlación, panel sectorial ([docs](docs/features.md)) | ✅ |
 | 3. Regímenes: tendencia × volatilidad + crisis, exposición recomendada y validación ([docs](docs/regimes.md)) | ✅ |
 | 4. Señales: rotación sectorial por régimen, cobertura, acciones entrar/añadir/reducir/salir ([docs](docs/portfolio.md)) | ✅ |
-| 5. Cartera: asignación por régimen y walk-forward ✅; construcción condicionada al régimen (`rot_v2`, [resultado negativo](docs/portfolio.md#rot_v2-construcción-condicionada-al-régimen-semana-6)) ✅; límites de riesgo y opciones | parcial |
+| 5. Cartera: asignación por régimen y walk-forward ✅; construcción condicionada al régimen (`rot_v2`, [resultado negativo](docs/portfolio.md#rot_v2-construcción-condicionada-al-régimen-semana-6)) ✅; bandas de no negociación (`rot_v1b`, [referencia actual](docs/portfolio.md#bandas-de-no-negociación-semana-7)) ✅; límites de riesgo y opciones | parcial |
 | 6. Alertas / ejecución | — |
 
 ## Qué datos recoge
@@ -56,7 +56,7 @@ uv run fin features report                         # informe HTML (uv sync --ext
 uv run fin regimes build                           # capa 3: régimen de cada sesión
 uv run fin regimes show                            # régimen actual y exposición recomendada
 uv run fin regimes report                          # validación: backtest, ablaciones, sensibilidad
-uv run fin portfolio build                         # capas 4-5: rot_v1 y rot_v2 al registro de decisiones
+uv run fin portfolio build                         # capas 4-5: rot_v1b y rot_v2 al registro de decisiones
 uv run fin portfolio show [--set rot_v2]           # cartera actual y cambios sugeridos
 uv run fin portfolio report                        # walk-forward contra referencias
 uv run fin status

@@ -112,26 +112,46 @@ def absolute_momentum_ok(scores: pd.Series, panel: dict[str, pd.DataFrame], t: p
     return scores[mom > 0]
 
 
-def select_sectors(scores: pd.Series, corr: pd.DataFrame | None, cfg: PortfolioConfig) -> tuple[list[str], bool]:
+def select_sectors(scores: pd.Series, corr: pd.DataFrame | None, cfg: PortfolioConfig,
+                   incumbents: list[str] | None = None) -> tuple[list[str], bool]:
     """Selecció voraç per puntuació evitant parells massa correlacionats.
 
-    Retorna (seleccionats, el_filtre_ha_canviat_la_selecció).
+    Amb `rank_buffer` > 0, els sectors de `incumbents` (la selecció anterior) que encara són
+    dins del top-(k + buffer) es mantenen; només les places que queden lliures es tornen a
+    triar (amb el filtre de correlació respecte de tots els ja triats).
+
+    Retorna (seleccionats, el_filtre_ha_canviat_la_selecció). "El filtre" inclou la banda de
+    rang: True si la selecció difereix del top-k ingenu.
     """
     ranked = list(scores.index)
     naive = ranked[: cfg.top_k]
-    if corr is None or cfg.max_pair_corr >= 1:
+    kept: list[str] = []
+    if cfg.rank_buffer > 0 and incumbents:
+        zone = set(ranked[: cfg.top_k + cfg.rank_buffer])
+        kept = [s for s in ranked if s in zone and s in incumbents][: cfg.top_k]
+    elif corr is None or cfg.max_pair_corr >= 1:
         return naive, False
-    chosen: list[str] = []
+    chosen: list[str] = list(kept)
+    if corr is None or cfg.max_pair_corr >= 1:
+        for s in ranked:
+            if len(chosen) == cfg.top_k:
+                break
+            if s not in chosen:
+                chosen.append(s)
+        chosen = [s for s in ranked if s in chosen]
+        return chosen, set(chosen) != set(naive)
     for s in ranked:
-        if not _too_correlated(s, chosen, corr, cfg.max_pair_corr):
-            chosen.append(s)
         if len(chosen) == cfg.top_k:
             break
+        if s not in chosen and not _too_correlated(s, chosen, corr, cfg.max_pair_corr):
+            chosen.append(s)
     for s in ranked:  # places buides: els millors restants
         if len(chosen) == cfg.top_k:
             break
         if s not in chosen:
             chosen.append(s)
+    if kept:  # ordre per puntuació, com sense banda
+        chosen = [s for s in ranked if s in chosen]
     return chosen, set(chosen) != set(naive)
 
 
@@ -181,13 +201,16 @@ def sleeve_weights(chosen: list[str], vol: pd.Series, cfg: PortfolioConfig) -> d
 
 
 def hedge_weights(sb_corr: float, available: set[str], cfg: PortfolioConfig,
-                  sb_corr_fast: float = np.nan) -> tuple[dict[str, float], str]:
-    """Cobertura per a la part (1 - E). `sb_corr_fast` només compta si `hedge_fast_window`."""
+                  sb_corr_fast: float = np.nan, in_bonds: bool = False) -> tuple[dict[str, float], str]:
+    """Cobertura per a la part (1 - E). `sb_corr_fast` només compta si `hedge_fast_window`.
+
+    Histèresi: si ja s'és en bons (`in_bonds`), el llindar puja `hedge_hysteresis`; si no, baixa.
+    """
     if not cfg.hedge or pd.isna(sb_corr):
         return {CASH: 1.0}, "cash"
-    fast_ok = (cfg.hedge_fast_window is None or pd.isna(sb_corr_fast)
-               or sb_corr_fast < cfg.bond_hedge_max_corr)
-    if sb_corr < cfg.bond_hedge_max_corr and fast_ok and cfg.bond_hedge in available:
+    thr = cfg.bond_hedge_max_corr + (cfg.hedge_hysteresis if in_bonds else -cfg.hedge_hysteresis)
+    fast_ok = (cfg.hedge_fast_window is None or pd.isna(sb_corr_fast) or sb_corr_fast < thr)
+    if sb_corr < thr and fast_ok and cfg.bond_hedge in available:
         return {cfg.bond_hedge: 1.0}, "bons"
     if cfg.gold in available:
         return {cfg.gold: cfg.gold_share, CASH: 1.0 - cfg.gold_share}, "or+cash"
@@ -225,6 +248,8 @@ def build_targets(inp: PortfolioInputs, cfg: PortfolioConfig | None = None,
     rows = []
     current: np.ndarray | None = None
     started = False
+    incumbents: list[str] = []
+    in_bonds = False
     for i, t in enumerate(idx):
         if rev.iloc[i]:
             trend = reg["trend"].iloc[i]
@@ -235,11 +260,13 @@ def build_targets(inp: PortfolioInputs, cfg: PortfolioConfig | None = None,
                 lo = max(0, i - cfg.corr_window + 1)
                 window = log_ret.iloc[lo: i + 1]
                 corr = window.dropna(axis=1, how="any").corr() if i + 1 >= cfg.corr_window else None
-                chosen, bound = select_sectors(candidates, corr, cfg)
+                chosen, bound = select_sectors(candidates, corr, cfg, incumbents)
+                incumbents = chosen
                 ew = equity_weights(chosen, inp.panel["vol_3m"].loc[t], rule, cfg)
                 avail = {a for a in (cfg.bond_hedge, cfg.gold)
                          if a in inp.prices and pd.notna(inp.prices.at[t, a])}
-                hw, hname = hedge_weights(sb_corr.iloc[i], avail, cfg, sb_fast.iloc[i])
+                hw, hname = hedge_weights(sb_corr.iloc[i], avail, cfg, sb_fast.iloc[i], in_bonds)
+                in_bonds = hname == "bons"
                 e = float(expo.iloc[i])
                 vec = np.zeros(len(assets))
                 for a, w in ew.items():

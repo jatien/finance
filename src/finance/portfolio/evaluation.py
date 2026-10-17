@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from finance.features.config import TRADING_DAYS
-from finance.portfolio.backtest import SimResult, simulate
+from finance.portfolio.backtest import SimResult, simulate, simulate_cfg
 from finance.portfolio.config import CASH, PortfolioConfig
 from finance.portfolio.construct import PortfolioInputs, Targets, build_targets, fixed_targets
 from finance.regimes.evaluation import episode_table, perf_metrics
@@ -66,7 +66,7 @@ def run_all(inp: PortfolioInputs, cfg: PortfolioConfig | None = None,
     cfg = cfg or PortfolioConfig()
     targets = targets or strategy_targets(inp, cfg)
     rets = inp.asset_returns()
-    sims = {k: simulate(t, rets, cfg.cost_bps, cfg.band) for k, t in targets.items()}
+    sims = {k: simulate_cfg(t, rets, cfg) for k, t in targets.items()}
     start = sims[MAIN].start
     return sims, start
 
@@ -200,7 +200,7 @@ def v2_comparison(inp: PortfolioInputs, cfg1: PortfolioConfig, cfg2: PortfolioCo
     """Mètriques per finestra, episodis i el veredicte del criteri pre-registrat."""
     targets = targets or v2_targets(inp, cfg1, cfg2)
     rets = inp.asset_returns()
-    sims = {k: simulate(t, rets, cfg2.cost_bps, cfg2.band) for k, t in targets.items()}
+    sims = {k: simulate_cfg(t, rets, cfg2) for k, t in targets.items()}
     start = sims[V1].start
     tables = {}
     for label, a, b in V2_WINDOWS:
@@ -223,4 +223,112 @@ def v2_verdict(tables: dict[str, pd.DataFrame], max_dd_slack: float = 3.0) -> pd
         rows.append({"finestra": label, "sharpe_v1": t.at[V1, "sharpe"], "sharpe_v2": t.at[V2, "sharpe"],
                      "dd_v1_%": t.at[V1, "max_dd_%"], "dd_v2_%": t.at[V2, "max_dd_%"],
                      "passa": bool(d_sharpe > 0 and d_dd >= -max_dd_slack)})
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------------------
+# Setmana 7: bandes (rang, tracking error diari, histèresi de la cobertura)
+# ---------------------------------------------------------------------------------------
+
+BAND_PIECES = {
+    "només banda de rang": {"rank_buffer"},
+    "només TE diari": {"rebalance", "te_band", "te_window", "check_daily"},
+    "només histèresi": {"hedge_hysteresis"},
+}
+
+
+def band_ablations(base: PortfolioConfig, banded: PortfolioConfig) -> dict[str, PortfolioConfig]:
+    """Variants de `base` amb una sola peça de les bandes de `banded`."""
+    out = {}
+    for label, fields in BAND_PIECES.items():
+        out[f"{base.name} {label}"] = base.variant(name=f"{base.name}:{label}",
+                                                   **{f: getattr(banded, f) for f in fields})
+    return out
+
+
+def bands_comparison(inp: PortfolioInputs, pairs: list[tuple[PortfolioConfig, PortfolioConfig]],
+                     ablations: bool = True) -> dict:
+    """Compara cada estratègia amb la seva versió amb bandes, a les finestres del pre-registre."""
+    ref = pairs[0][0]
+    rets = inp.asset_returns()
+    cache: dict = {}
+    configs: dict[str, PortfolioConfig] = {}
+    for base, banded in pairs:
+        configs[base.name] = base
+        configs[banded.name] = banded
+        if ablations:
+            configs.update(band_ablations(base, banded))
+    targets = {k: build_targets(inp, c) for k, c in configs.items()}
+    start = targets[ref.name].weights.dropna().index.min()
+    sims = {"SPY buy & hold": simulate(fixed_targets(inp.index, {ref.market: 1.0}, monthly=False, start=start),
+                                       rets, ref.cost_bps, ref.band),
+            "Règims sobre SPY": simulate(regime_on_market(inp, ref), rets, ref.cost_bps, ref.band)}
+    sims.update({k: simulate_cfg(targets[k], rets, c, cache) for k, c in configs.items()})
+    start = sims[ref.name].start
+    tables = {}
+    for label, a, b in V2_WINDOWS:
+        s0 = max(start, pd.Timestamp(a)) if a else start
+        t = metrics_table(sims, inp, ref, s0, pd.Timestamp(b) if b else None)
+        t["operacions_any"] = [_trades_per_year(sims[k], s0, b) for k in t["estrategia"]]
+        tables[label] = t
+    verdict = pd.concat([bands_verdict(tables, base.name, banded.name) for base, banded in pairs],
+                        ignore_index=True)
+    return {"sims": sims, "targets": targets, "configs": configs, "start": start, "tables": tables,
+            "episodes": episodes(sims, start), "verdict": verdict}
+
+
+def _trades_per_year(sim: SimResult, start: pd.Timestamp, end: str | None) -> float:
+    tr = sim.trades.loc[start:pd.Timestamp(end) if end else None]
+    return float(tr.sum() / max(len(tr) / TRADING_DAYS, 1e-9))
+
+
+def bands_verdict(tables: dict[str, pd.DataFrame], base: str, banded: str,
+                  min_turnover_cut: float = 0.25, sharpe_slack: float = 0.03,
+                  dd_slack: float = 2.0) -> pd.DataFrame:
+    """Criteri del pre-registre de la setmana 7.
+
+    Passa si la rotació (mostra completa) baixa >= 25 % i, a les finestres de disseny i de
+    comprovació, el Sharpe no baixa més de 0,03 ni la caiguda màxima empitjora més de 2 punts.
+    """
+    full = tables[V2_WINDOWS[0][0]].set_index("estrategia")
+    cut = 1 - full.at[banded, "rotacio_anual"] / full.at[base, "rotacio_anual"]
+    rows = [{"parella": f"{base} → {banded}", "finestra": V2_WINDOWS[0][0],
+             "rotacio_base": full.at[base, "rotacio_anual"], "rotacio_bandes": full.at[banded, "rotacio_anual"],
+             "reduccio_rotacio_%": 100 * cut, "passa": bool(cut >= min_turnover_cut)}]
+    for label in [w[0] for w in V2_WINDOWS[1:]]:
+        t = tables[label].set_index("estrategia")
+        if "sharpe" not in t or t.loc[[base, banded], ["sharpe", "max_dd_%"]].isna().any().any():
+            rows.append({"parella": f"{base} → {banded}", "finestra": label, "passa": None})
+            continue
+        d_sh = t.at[banded, "sharpe"] - t.at[base, "sharpe"]
+        d_dd = t.at[banded, "max_dd_%"] - t.at[base, "max_dd_%"]
+        rows.append({"parella": f"{base} → {banded}", "finestra": label,
+                     "sharpe_base": t.at[base, "sharpe"], "sharpe_bandes": t.at[banded, "sharpe"],
+                     "dd_base_%": t.at[base, "max_dd_%"], "dd_bandes_%": t.at[banded, "max_dd_%"],
+                     "passa": bool(d_sh >= -sharpe_slack and d_dd >= -dd_slack)})
+    return pd.DataFrame(rows)
+
+
+def bands_pass(verdict: pd.DataFrame, pair_label: str) -> bool | None:
+    v = verdict.loc[verdict["parella"] == pair_label, "passa"]
+    if v.isna().any():
+        return None
+    return bool(v.all())
+
+
+def bands_sensitivity(inp: PortfolioInputs, banded: PortfolioConfig,
+                      buffers: tuple[int, ...] = (0, 1, 2, 3),
+                      te_bands: tuple[float, ...] = (0.005, 0.01, 0.02)) -> pd.DataFrame:
+    """Robustesa de les bandes (no selecció del millor punt): banda de rang × llindar de TE."""
+    rets = inp.asset_returns()
+    cache: dict = {}
+    rows = []
+    for b in buffers:
+        t = build_targets(inp, banded.variant(rank_buffer=b))
+        for te in te_bands:
+            c = banded.variant(rank_buffer=b, te_band=te)
+            sim = simulate_cfg(t, rets, c, cache)
+            m = perf_metrics(sim.returns.dropna(), inp.cash_ret, None, sim.turnover)
+            rows.append({"estrategia": banded.name, "rank_buffer": b, "te_band_%": 100 * te,
+                         **{k: m.get(k) for k in ("CAGR_%", "sharpe", "max_dd_%", "calmar", "rotacio_anual")}})
     return pd.DataFrame(rows)

@@ -5,8 +5,8 @@ GICS (*dónde* ponerlo) y una cartera de cobertura para la parte que no va a ren
 Cada revisión queda en un registro de decisiones con las acciones sugeridas.
 
 ```bash
-uv run fin portfolio build       # estrategias activas (rot_v1, rot_v2) → registro de decisiones (`portfolio_targets`)
-uv run fin portfolio show        # cartera actual y últimos cambios (por defecto rot_v1; --set rot_v2)
+uv run fin portfolio build       # estrategias activas (rot_v1b, rot_v2) → registro de decisiones (`portfolio_targets`)
+uv run fin portfolio show        # cartera actual y últimos cambios (por defecto rot_v1b; --set rot_v2)
 uv run fin portfolio report      # walk-forward contra referencias, ablaciones y sensibilidad (~1 min)
 ```
 
@@ -198,3 +198,101 @@ Episodios: punto com −20,3 % (`rot_v1` −13,6 %), crisis financiera +1,2 % (+
   dispersión entre sectores es alta, más SPY cuando es baja.
 - Probar "sin núcleo" con la puntuación de tendencia en una muestra que no se haya usado:
   industrias (SMH, IGV...) en lugar de sectores, o el tramo de paper trading.
+
+## Bandas de no negociación (semana 7)
+
+### Diagnóstico previo (sobre las estrategias existentes, sin reglas nuevas)
+
+| | Rotación/año | Altas/bajas de activos | Reajustes de peso | En cambios de régimen | Operaciones/año |
+|---|---|---|---|---|---|
+| `rot_v1` | 8,6 | 7,1 (83 %) | 1,5 | 3,6 | 11,1 |
+| `rot_v2` | 5,2 | 3,8 (74 %) | 1,3 | 3,3 | 9,8 |
+
+En la mitad de las revisiones mensuales entra al menos un sector nuevo (sale otro). La banda
+del 2 % solo actúa sobre los reajustes de peso, la parte pequeña: por eso no cambiaba nada.
+
+### Pre-registro
+
+Escrito y confirmado en git **antes** de ejecutar ningún backtest de las versiones con
+bandas. Una banda por cada fuente de rotación (`BANDS_V1` en `portfolio/config.py`):
+
+| Banda | Regla | Valor | Ataca |
+|---|---|---|---|
+| De rango | un sector en cartera se queda mientras esté en el top-(k + 2): "compra el top-3, vende cuando sale del top-5" | `rank_buffer = 2` | altas/bajas de sectores |
+| De tracking error | se reequilibra solo si `sqrt((w − w*)ᵀ Σ (w − w*) · 252) > 1 %`, con Σ de 63 sesiones (Palomar, sec. 6.1.5). Mide la distancia en riesgo, no en peso | `te_band = 1 %` | reajustes pequeños y cambios entre activos casi equivalentes |
+| Comprobación diaria | el disparador anterior se evalúa cada sesión contra el último objetivo, no solo en las revisiones | `check_daily = True` | deriva de precios entre revisiones |
+| Histéresis de cobertura | se entra en bonos con correlación < −0,10 y se sale con > +0,10 | `hedge_hysteresis = 0,10` | cambios bonos ↔ oro+efectivo |
+
+Se aplican a las dos estrategias activas: `rot_v1b = rot_v1 + bandas` y
+`rot_v2b = rot_v2 + bandas`. La exposición E y la puntuación no cambian.
+
+Valores convencionales, no optimizados: top-5 para mantener un top-3 es la regla habitual de
+los "hold buffers" de momentum; 1 % de TE es del orden de lo que mueve un reajuste del 5 % de
+un sector y muy por debajo de lo que mueve un cambio de sector o de exposición (~5 %).
+
+**Criterio** (para cada pareja `rot_vX → rot_vXb`):
+
+1. La rotación anual (muestra completa 2000-01 → 2026-10) baja al menos un **25 %**, y
+2. en las ventanas de diseño (2000–2015) y comprobación (2016–2026), el Sharpe no baja más de
+   **0,03** y la caída máxima no empeora más de **2 puntos**.
+
+Si pasa, la versión con bandas sustituye a la original en el registro diario de decisiones
+(la original queda en el código como referencia). Si no, se registra el resultado y no cambia
+nada. Ablaciones: cada banda por separado sobre `rot_v1` y `rot_v2`. Sensibilidad (robustez,
+no selección): `rank_buffer` 0–3 × `te_band` 0,5/1/2 %.
+
+### Resultados (una sola ejecución, 16-oct-2026)
+
+| Estrategia | Completa: CAGR / Sharpe / máx. caída | 2000–2015 | 2016–2026 | Rotación/año | Operaciones/año |
+|---|---|---|---|---|---|
+| Regímenes sobre SPY | 7,3 % / 0,51 / −25,6 % | 4,7 % / 0,32 / −25,6 % | 11,4 % / 0,79 / −21,4 % | 1,7 | 3,5 |
+| `rot_v1` | 6,6 % / 0,44 / −22,6 % | 6,1 % / 0,44 / −15,7 % | 7,3 % / 0,45 / −22,6 % | 8,6 | 11,1 |
+| **`rot_v1b`** | **8,6 % / 0,61 / −16,4 %** | 6,7 % / 0,49 / −16,1 % | 11,6 % / 0,78 / −16,4 % | **5,2** | 7,1 |
+| `rot_v1` solo banda de rango | 8,6 % / 0,61 / −16,4 % | 6,8 % / 0,50 / −15,9 % | 11,3 % / 0,76 / −16,4 % | 5,5 | 9,3 |
+| `rot_v1` solo TE diario | 6,7 % / 0,45 / −22,6 % | 6,2 % / 0,44 / −15,6 % | 7,4 % / 0,46 / −22,6 % | 8,5 | 10,0 |
+| `rot_v1` solo histéresis | 6,6 % / 0,44 / −22,5 % | 6,0 % / 0,43 / −15,7 % | 7,5 % / 0,46 / −22,5 % | 8,5 | 11,1 |
+| `rot_v2` | 8,2 % / 0,57 / −26,0 % | 6,3 % / 0,45 / −21,4 % | 10,9 % / 0,75 / −26,0 % | 5,2 | 9,8 |
+| `rot_v2b` | 8,4 % / 0,59 / −25,8 % | 6,5 % / 0,46 / −21,5 % | 11,5 % / 0,78 / −25,8 % | 3,9 | 6,2 |
+
+**Veredicto del criterio pre-registrado**
+
+- `rot_v1 → rot_v1b`: **pasa**. Rotación −40 %; Sharpe 0,44 → 0,49 (2000–2015) y 0,45 → 0,78
+  (2016–2026); caída −15,7 → −16,1 % y −22,6 → −16,4 %. `rot_v1b` sustituye a `rot_v1` en el
+  registro diario y pasa a ser la referencia.
+- `rot_v2 → rot_v2b`: **no pasa**. Mejora en todo, pero la rotación baja un 24,6 % y el umbral
+  era del 25 %. No se mueve el umbral después de ver el resultado: `rot_v2` sigue sin bandas.
+
+Estrategias activas desde ahora: `rot_v1b` (referencia) y `rot_v2`.
+
+### Lectura honesta
+
+1. **Toda la mejora viene de la banda de rango.** El TE diario y la histéresis, solos, no
+   cambian casi nada (±0,01 de Sharpe). La histéresis incluso alargó la posición en bonos en
+   julio y septiembre de 2022.
+2. **El mecanismo es el esperado, no un artefacto.** Se ha comprobado año a año: `rot_v1b` gana
+   en 17 de 27 años (mediana +2,4 puntos/año; +1,5 sin los dos mejores años). En 2022
+   (−6,8 % frente a −15,3 %), `rot_v1` cambió XLE (4.º–5.º del ranking) por XLK en enero; la
+   banda lo mantuvo mientras la energía subía un 19 % y un 7 % en enero y febrero (+5 puntos de
+   XLE frente a −3,7 de XLK). Es el problema clásico del momentum sin banda: vende ganadores
+   que solo han bajado un par de puestos.
+3. **Por qué ayuda mucho a `rot_v1` y poco a `rot_v2`.** La puntuación de `rot_v1` cambia de
+   forma (inclinación defensiva) en cada cambio de tendencia y está ajustada por volatilidad: el
+   ranking es ruidoso cerca del corte. En `rot_v2` el 70 % es SPY y el satélite pesa menos.
+4. **Sensibilidad**: con `rot_v1b`, banda de rango 0/1/2/3 → Sharpe 0,45/0,55/0,61/0,58; el
+   umbral de TE (0,5–2 %) apenas importa. La mejora aparece con cualquier banda ≥ 1, así que no
+   depende de un punto concreto. El valor fijado de antemano (2) resulta ser también el mejor
+   de la rejilla: conviene leer el +0,17 de Sharpe como techo y esperar algo más cercano a lo
+   que dan 1 o 3 (+0,10 a +0,14).
+5. **Sigue siendo una muestra usada para diseñar.** La idea de la banda es estándar y estaba
+   decidida antes de ejecutar, pero el diagnóstico de la rotación se hizo con estos mismos
+   datos. La validación real es el paper trading.
+6. **`rot_v1b` alcanza a "regímenes sobre SPY"** en 2016–2026 (Sharpe 0,78 frente a 0,79) con
+   una caída menor (−16,4 % frente a −21,4 %), y lo supera en la muestra completa (0,61 frente
+   a 0,51). Por primera vez la rotación sectorial no resta frente a tener solo el mercado.
+
+### Pendiente para la semana 8
+
+El registro de decisiones compara objetivos entre revisiones. Con el disparador por TE, un
+cambio pequeño del objetivo (p. ej. XLK +4 % el 1-oct) puede no ejecutarse en la simulación.
+El informe diario tiene que partir de la cartera simulada (lo que de verdad se tendría) y
+listar solo las operaciones que el disparador ejecuta.
