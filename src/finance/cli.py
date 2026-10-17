@@ -17,6 +17,8 @@ Exemples:
     fin portfolio build              # cartera objectiu i registre de decisions (capes 4-5)
     fin portfolio show               # cartera objectiu actual i últims canvis suggerits
     fin portfolio report             # informe HTML: walk-forward contra referències i ablacions
+    fin ingest insiders              # operacions d'insiders de la SEC (Form 4/5)
+    fin insiders build|show|report   # senyals d'insiders, estat actual i validació (setmana 10)
     fin paper update|show|log        # paper trading congelat (setmana 8)
     fin report daily                 # informe diari: què fer a la sessió següent
     fin status                       # estat del lake i dels últims jobs
@@ -48,6 +50,8 @@ regimes_app = typer.Typer(no_args_is_help=True, help="Capa 3: règims de mercat"
 app.add_typer(regimes_app, name="regimes")
 portfolio_app = typer.Typer(no_args_is_help=True, help="Capes 4-5: rotació sectorial i cartera objectiu")
 app.add_typer(portfolio_app, name="portfolio")
+insiders_app = typer.Typer(no_args_is_help=True, help="Insiders (Form 4 de la SEC): senyals i validació")
+app.add_typer(insiders_app, name="insiders")
 console = Console()
 
 Symbols = Annotated[list[str] | None, typer.Option("--symbol", "-s", help="Símbol (repetible)")]
@@ -129,6 +133,20 @@ def ingest_instruments(symbols: Symbols = None) -> None:
     """Metadades d'instruments (sector, indústria, categoria de fons...)."""
     from finance.ingest import run_job
     _exit(run_job(_ctx(), "instruments", symbols=symbols))
+
+
+@ingest_app.command("insiders")
+def ingest_insiders(
+    quarters: Annotated[list[str] | None, typer.Option("--quarter", "-q", help="Trimestre, p. ex. 2026q2 (repetible)")] = None,
+    full: bool = typer.Option(False, help="Torna a carregar tots els trimestres des de FIN_INSIDER_START_YEAR"),
+    daily: bool = typer.Option(True, help="Recupera els dies posteriors a l'últim trimestre via XML"),
+    max_days: int | None = typer.Option(None, help="Màxim de dies de la cua diària"),
+    all_issuers: bool = typer.Option(False, help="Cua diària de tots els emissors (no només el S&P 500)"),
+) -> None:
+    """Operacions d'insiders de la SEC (Form 4/5): trimestres + cua diària."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "insiders", quarters=quarters, full=full, daily=daily,
+                  max_days=max_days, all_issuers=all_issuers))
 
 
 # ---------------------------------------------------------------------------------------
@@ -342,6 +360,63 @@ def compact(
     from finance.ingest import run_job
     _exit(run_job(_ctx(), "compact", datasets=dataset, min_files=min_files))
 
+
+
+@insiders_app.command("build")
+def insiders_build() -> None:
+    """Esdeveniments per acció i amplitud d'insiders (escriu al lake)."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "insider_signals"))
+
+
+@insiders_app.command("show")
+def insiders_show(
+    days: int = typer.Option(30, help="Dies naturals enrere"),
+    all_events: bool = typer.Option(False, "--all", help="Inclou les compres simples ('buy')"),
+    signal_set: str = typer.Option("ins_v1", "--set"),
+) -> None:
+    """Esdeveniments recents al S&P 500 i amplitud d'insiders per sector."""
+    from finance.insiders.config import EVENT_SHORT
+    from finance.insiders.job import read_breadth, read_events
+    ctx = _ctx()
+    since = (pd.Timestamp.now() - pd.Timedelta(days=days)).date()
+    ev = read_events(ctx, signal_set, since)
+    if ev.empty and read_events(ctx, signal_set).empty:
+        console.print("[yellow]sense esdeveniments: executa `fin ingest insiders` i `fin insiders build`[/yellow]")
+        raise typer.Exit(1)
+    ev = ev[ev["in_sp500"]]
+    if not all_events:
+        ev = ev[ev["event"] != "buy"]
+    ev = ev.sort_values("signal_date", ascending=False)
+    out = pd.DataFrame({
+        "data": ev["signal_date"].dt.date, "símbol": ev["symbol"], "sector": ev["sector"],
+        "esdeveniment": ev["event"].map(EVENT_SHORT).fillna(ev["event"]),
+        "insiders": ev["n_insiders"], "import M$": (ev["value"] / 1e6).round(2),
+        "import/ADV": ev["value_adv"].round(3), "qui": ev["names"].str.slice(0, 40),
+    })
+    _print_df(out, f"Esdeveniments d'insiders des del {since}")
+    br = read_breadth(ctx, signal_set)
+    if not br.empty:
+        last = br.dropna(subset=["buy_ratio"]).sort_values("date").groupby("scope").tail(1)
+        last = last.sort_values("buy_ratio", ascending=False)
+        last = last.assign(date=last["date"].dt.date, buy_ratio=last["buy_ratio"].round(3),
+                           ratio_pct=last["ratio_pct"].round(2))
+        _print_df(last, "Amplitud (63 sessions): compres / (compres + vendes)")
+
+
+@insiders_app.command("report")
+def insiders_report(out: str | None = typer.Option(None, help="Fitxer HTML de sortida")) -> None:
+    """Validació: estudi d'esdeveniments, carteres de calendari, ablacions i criteris."""
+    from pathlib import Path
+
+    from finance.insiders.report import build_report, run_evaluation
+    ctx = _ctx()
+    res = run_evaluation(ctx)
+    path = Path(out) if out else ctx.settings.data_dir / "reports" / f"insiders_{res.cfg.name}.html"
+    build_report(ctx, res, path)
+    vt = res.verdict.assign(passa=res.verdict["passa"].map({True: "sí", False: "no", None: "—"}))
+    _print_df(vt, "Criteris pre-registrats")
+    console.print(str(path))
 
 @app.command()
 def status() -> None:

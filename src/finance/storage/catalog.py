@@ -49,12 +49,25 @@ def raw_view_sql(lake: Lake, spec: DatasetSpec) -> str:
 def dedup_view_sql(spec: DatasetSpec) -> str:
     pk = ", ".join(f'"{c}"' for c in spec.primary_key)
     order = ", ".join(f'"{c}" DESC' for c in spec.dedup_order)
-    sql = (f"SELECT * FROM {spec.name}_raw "
-           f"QUALIFY row_number() OVER (PARTITION BY {pk} ORDER BY {order}) = 1")
+    src = f"{spec.name}_raw"
     if spec.snapshot_by:
-        grp = ", ".join(f'"{c}"' for c in spec.snapshot_by)
-        sql = (f"SELECT * FROM ({sql}) "
-               f"QUALIFY ingested_at = max(ingested_at) OVER (PARTITION BY {grp})")
+        # Files de l'última ingesta de cada grup. Amb una unió contra el màxim per grup (que
+        # només llegeix dues columnes) en lloc d'una finestra sobre totes les columnes: els
+        # filtres de la consulta (p. ex. per data) arriben a la lectura del Parquet.
+        # Equivalent a deduplicar primer per clau: la fila més recent de cada clau del grup
+        # sempre pertany a l'última ingesta.
+        grp = [f'"{c}"' for c in spec.snapshot_by]
+        on = " AND ".join(f"r.{g} IS NOT DISTINCT FROM m.{g}" for g in grp)
+        src = (f"(SELECT r.* FROM {spec.name}_raw r JOIN (SELECT {', '.join(grp)}, "
+               f"max(ingested_at) AS _max_ing FROM {spec.name}_raw GROUP BY ALL) m "
+               f"ON {on} AND r.ingested_at = m._max_ing)")
+        if spec.pk_unique_per_ingest:
+            sql = f"SELECT * FROM {src}"
+            if spec.view_filter:
+                sql = f"SELECT * FROM ({sql}) WHERE {spec.view_filter}"
+            return sql
+    sql = (f"SELECT * FROM {src} "
+           f"QUALIFY row_number() OVER (PARTITION BY {pk} ORDER BY {order}) = 1")
     if spec.view_filter:
         sql = f"SELECT * FROM ({sql}) WHERE {spec.view_filter}"
     return sql

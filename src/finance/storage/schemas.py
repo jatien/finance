@@ -53,6 +53,10 @@ class DatasetSpec:
     snapshot_by: tuple[str, ...] | None = None
     # Filtre SQL addicional de la vista (pot referenciar `<name>_raw`)
     view_filter: str | None = None
+    # Amb `snapshot_by`: cada ingesta escriu com a molt una fila per clau primària, de manera
+    # que la vista no necessita la finestra de deduplicació per clau (molt més ràpid en
+    # datasets grans com `insider_transactions`).
+    pk_unique_per_ingest: bool = False
 
     @property
     def schema(self) -> pa.Schema:
@@ -513,13 +517,118 @@ PAPER_NAV = DatasetSpec(
     sort_by=("strategy_set", "date"),
 )
 
+INSIDER_TRANSACTIONS = DatasetSpec(
+    name="insider_transactions",
+    path="insider_transactions",
+    description=(
+        "Operacions no derivades declarades a la SEC (Form 4/5) per consellers, directius i "
+        "accionistes >10%. Una fila per línia de la presentació. Point-in-time: una operació "
+        "només és coneguda a partir de `filing_date` (no de `trans_date`). Cada presentació es "
+        "substitueix sencera a la vista (l'XML diari provisional cedeix davant el TSV trimestral)."
+    ),
+    fields=[
+        pa.field("accession_number", pa.string(), nullable=False),
+        pa.field("line_no", pa.int32(), nullable=False),
+        pa.field("filing_date", pa.date32(), nullable=False),
+        pa.field("form_type", pa.string(), nullable=False),  # 4 | 4/A | 5 | 5/A
+        pa.field("issuer_cik", pa.string()),
+        pa.field("issuer_name", pa.string()),
+        pa.field("symbol", pa.string()),  # declarat a la presentació, convenció Yahoo
+        pa.field("owner_cik", pa.string()),
+        pa.field("owner_name", pa.string()),
+        pa.field("n_owners", pa.int32()),
+        pa.field("is_director", pa.bool_()),
+        pa.field("is_officer", pa.bool_()),
+        pa.field("is_ten_pct", pa.bool_()),
+        pa.field("is_other", pa.bool_()),
+        pa.field("officer_title", pa.string()),
+        pa.field("security_title", pa.string()),
+        pa.field("trans_date", pa.date32()),
+        pa.field("trans_code", pa.string()),  # P compra mercat, S venda, A atorgament, M exercici...
+        pa.field("acq_disp", pa.string()),  # A adquirit | D venut
+        pa.field("shares", pa.float64()),
+        pa.field("price", pa.float64()),
+        pa.field("value", pa.float64()),
+        pa.field("shares_after", pa.float64()),
+        pa.field("direct", pa.bool_()),
+        pa.field("plan_10b5_1", pa.bool_()),  # dins d'un pla preprogramat (nota o casella)
+        pa.field("plan_flag", pa.bool_()),  # casella AFF10B5ONE (des del 2023; nul abans)
+        pa.field("source_file", pa.string()),  # trimestre (2026q3) o "xml"
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("accession_number", "line_no"),
+    partition=Partition("year", derive=_year_from("filing_date")),
+    sort_by=("filing_date", "issuer_cik", "accession_number", "line_no"),
+    snapshot_by=("accession_number",),
+    pk_unique_per_ingest=True,
+)
+
+INSIDER_EVENTS = DatasetSpec(
+    name="insider_events",
+    path="insider_events",
+    description=(
+        "Esdeveniments d'insiders per acció (capa de senyals): compres oportunistes, compres "
+        "en grup (cluster), compres del CEO/CFO i vendes en grup. `signal_date` és la primera "
+        "sessió en què se sabia (sessió posterior a la presentació). Es regenera sencer."
+    ),
+    fields=[
+        pa.field("signal_set", pa.string(), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("signal_date", pa.date32(), nullable=False),
+        pa.field("event", pa.string(), nullable=False),
+        pa.field("issuer_cik", pa.string()),
+        pa.field("sector", pa.string()),
+        pa.field("in_sp500", pa.bool_()),
+        pa.field("n_insiders", pa.int32()),
+        pa.field("n_officers", pa.int32()),
+        pa.field("value", pa.float64()),  # import total de la finestra (USD)
+        pa.field("value_adv", pa.float64()),  # import / volum mitjà diari en USD (60 sessions)
+        pa.field("ceo_cfo", pa.bool_()),
+        pa.field("first_filing", pa.date32()),
+        pa.field("last_filing", pa.date32()),
+        pa.field("names", pa.string()),
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("signal_set", "symbol", "signal_date", "event"),
+    partition=Partition("year", derive=_year_from("signal_date")),
+    sort_by=("signal_set", "signal_date", "symbol"),
+    snapshot_by=("signal_set",),
+    pk_unique_per_ingest=True,
+)
+
+INSIDER_BREADTH = DatasetSpec(
+    name="insider_breadth",
+    path="insider_breadth",
+    description=(
+        "Amplitud d'insiders per sessió: compres i vendes elegibles (parelles insider-empresa-mes) "
+        "a la finestra mòbil, al mercat (S&P 500 vigent) i per sector GICS. `buy_ratio` = "
+        "compres / (compres + vendes); `ratio_pct` = percentil expansiu. Es regenera sencer."
+    ),
+    fields=[
+        pa.field("signal_set", pa.string(), nullable=False),
+        pa.field("scope", pa.string(), nullable=False),  # market | sector GICS
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("buyers", pa.float64()),
+        pa.field("sellers", pa.float64()),
+        pa.field("buy_ratio", pa.float64()),
+        pa.field("ratio_pct", pa.float64()),
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("signal_set", "scope", "date"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("signal_set", "scope", "date"),
+    snapshot_by=("signal_set",),
+    pk_unique_per_ingest=True,
+)
+
 REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
         PRICES_DAILY, CORPORATE_ACTIONS, OPTION_SNAPSHOTS, MACRO_OBSERVATIONS,
         UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
         DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY, REGIMES_DAILY, PORTFOLIO_TARGETS,
-        PAPER_BOOK, PAPER_NAV,
+        PAPER_BOOK, PAPER_NAV, INSIDER_TRANSACTIONS, INSIDER_EVENTS,
+        INSIDER_BREADTH,
     )
 }
 

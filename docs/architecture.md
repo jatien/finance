@@ -33,6 +33,7 @@ src/finance/
 │   ├── fred.py        series macro con vintages (ALFRED) o sin clave (fredgraph)
 │   ├── wikipedia.py   composición actual del S&P 500 con GICS
 │   ├── sp500_history.py  historial de composición desde 1996 (fja05680/sp500)
+│   ├── sec.py         operaciones de insiders: datasets trimestrales + índice diario/XML de EDGAR
 │   └── ratelimit.py   token bucket compartido + reintentos con backoff exponencial
 ├── storage/
 │   ├── schemas.py     registro de datasets: esquema Arrow, clave primaria, partición
@@ -126,6 +127,9 @@ ejecución queda como `partial` con el error registrado.
 | `portfolio_targets` | strategy_set, date, symbol | year | registro de decisiones: cartera objetivo y acción (enter/add/reduce/exit/hold) en cada revisión |
 | `paper_book` | strategy_set, date, symbol | year | paper trading: posición tras el cierre, operación y objetivo vigente; **congelado** (no se reescribe) |
 | `paper_nav` | strategy_set, date | year | paper trading: valor, coste, operaciones y motivo de cada sesión; congelado |
+| `insider_transactions` | accession_number, line_no | year | operaciones de insiders (Form 4/5); cada presentación se sustituye entera (XML diario → TSV trimestral) |
+| `insider_events` | signal_set, symbol, signal_date, event | year | compras en grupo, del CEO/CFO, oportunistas y ventas en grupo; se regenera entero |
+| `insider_breadth` | signal_set, scope, date | year | amplitud de compras/ventas de insiders (mercado y sectores); se regenera entera |
 
 La capa de features se describe en [features.md](features.md), la de regímenes en
 [regimes.md](regimes.md) y la rotación y cartera en [portfolio.md](portfolio.md).
