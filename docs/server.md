@@ -83,7 +83,7 @@ Después:
 | Timer | Cuándo | Qué hace |
 |---|---|---|
 | `finance-options` | L–V 10:00, 12:45, 15:30 (hora NY) | Foto de cadenas de opciones completas |
-| `finance-daily` | L–V 21:15 (hora NY; 03:15 en Madrid) | Universo si tiene >7 días → precios → macro → calidad → features → regímenes → cartera → compactación |
+| `finance-daily` | L–V 21:15 (hora NY; 03:15 en Madrid) | Universo si tiene >7 días → precios → macro → calidad → features → regímenes → cartera → paper trading → compactación → informe diario |
 | `finance-weekly` | Sábado 10:00 (Madrid) | Universo S&P 500, historial de composición, metadatos, compactación completa |
 | `finance-backup` | Diario 05:30 (Madrid), tras el pipeline diario | Copia del lake (si hay destino configurado) |
 
@@ -107,6 +107,20 @@ cd /srv/finance/app && set -a && . /etc/finance/finance.env && set +a
 .venv/bin/fin dq                                # controles de calidad
 .venv/bin/fin sql "SELECT * FROM job_status"
 ```
+
+### Informe diario (paper trading)
+
+Cada mañana hay un informe nuevo en `$FIN_DATA_DIR/reports/daily/`:
+
+```bash
+cat $FIN_DATA_DIR/reports/daily/latest.md       # resumen: ¿se puede operar? órdenes de hoy
+.venv/bin/fin report daily --capital 25000      # regenerarlo con otro capital nocional
+.venv/bin/fin paper show                        # cartera del paper trading
+.venv/bin/fin paper log                         # registro de decisiones
+```
+
+`latest.html` se abre desde VSCode (Remote-SSH → clic derecho → *Open with Live Server* o
+*Reveal in Explorer* y abrirlo en el navegador local). Ver [paper.md](paper.md).
 
 Logs estructurados (JSON Lines) en `/srv/finance/data/logs/fin.jsonl` (rotación 10 × 20 MB).
 

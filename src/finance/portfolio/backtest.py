@@ -65,11 +65,61 @@ def _tracking_error(d: np.ndarray, C: np.ndarray) -> float:
     return float(np.sqrt(max(v, 0.0)))
 
 
+@dataclass
+class Trigger:
+    """Disparador del reequilibri (vegeu el docstring del mòdul)."""
+    rebalance: str = "max_abs"
+    band: float = 0.02
+    te_band: float = 0.01
+
+    def __post_init__(self) -> None:
+        if self.rebalance not in ("max_abs", "tracking_error"):
+            raise ValueError(f"rebalance desconegut: {self.rebalance}")
+
+    def distance(self, tgt: np.ndarray, cur: np.ndarray, cov_i: np.ndarray | None) -> tuple[float, str]:
+        """(distància, tipus): TE anualitzat si es pot calcular; si no, desviació màxima de pes."""
+        if self.rebalance == "tracking_error" and cov_i is not None:
+            te = _tracking_error(cur - tgt, cov_i)
+            if not np.isnan(te):
+                return te, "te"
+        return float(np.max(np.abs(tgt - cur))), "max_abs"
+
+    def fires(self, tgt: np.ndarray, cur: np.ndarray, cov_i: np.ndarray | None) -> bool:
+        d, kind = self.distance(tgt, cur, cov_i)
+        return d > (self.te_band if kind == "te" else self.band)
+
+
+@dataclass
+class StepResult:
+    weights: np.ndarray  # pesos al final de la sessió (després de negociar)
+    pre_weights: np.ndarray  # pesos després de la deriva, abans de negociar
+    gross: float  # retorn brut de la sessió (abans de costos)
+    cost: float
+    turnover: float
+    traded: bool
+
+
+def step(w: np.ndarray, r: np.ndarray, tgt: np.ndarray | None, *, trigger: Trigger, cost_bps: float,
+         non_cash: np.ndarray, cov_i: np.ndarray | None = None, force: bool = False) -> StepResult:
+    """Una sessió: deriva dels pesos amb els retorns `r` i, si toca, negociació fins a `tgt`.
+
+    És l'única implementació de la mecànica diària: la fan servir el backtest (`simulate`) i el
+    paper trading, de manera que tots dos donen exactament el mateix resultat amb les mateixes
+    dades. Un actiu amb pes > 0 sense retorn aquell dia (forat de dades) es tracta com a 0.
+    """
+    r = np.where(np.isnan(r), 0.0, r)
+    gross = float(w @ r)
+    pre = w * (1 + r) / (1 + gross)
+    if tgt is not None and (force or trigger.fires(tgt, pre, cov_i)):
+        to = float(np.abs(tgt - pre)[non_cash].sum())
+        return StepResult(tgt.copy(), pre, gross, to * cost_bps / 1e4, to, True)
+    return StepResult(pre, pre, gross, 0.0, 0.0, False)
+
+
 def simulate(targets: Targets, rets: pd.DataFrame, cost_bps: float = 5.0, band: float = 0.02, *,
              rebalance: str = "max_abs", te_band: float = 0.01, cov: np.ndarray | None = None,
              check_daily: bool = False) -> SimResult:
-    if rebalance not in ("max_abs", "tracking_error"):
-        raise ValueError(f"rebalance desconegut: {rebalance}")
+    trigger = Trigger(rebalance, band, te_band)
     if rebalance == "tracking_error" and cov is None:
         raise ValueError("rebalance='tracking_error' necessita `cov` (vegeu rolling_cov)")
     idx = targets.weights.index
@@ -85,39 +135,25 @@ def simulate(targets: Targets, rets: pd.DataFrame, cost_bps: float = 5.0, band: 
     held = np.full((n, len(assets)), np.nan)
     w: np.ndarray | None = None
     last_tgt: np.ndarray | None = None
-
-    def out_of_band(tgt: np.ndarray, cur: np.ndarray, i: int) -> bool:
-        if rebalance == "tracking_error":
-            te = _tracking_error(cur - tgt, cov[i])
-            if not np.isnan(te):
-                return te > te_band
-        return bool(np.max(np.abs(tgt - cur)) > band)
-
     for i in range(n):
-        r_i = np.nan
-        if w is not None:
-            ri = R[i]
-            # Un actiu amb pes > 0 sense retorn aquell dia (forat de dades) es tracta com a 0
-            ri = np.where(np.isnan(ri), 0.0, ri)
-            gross = float(w @ ri)
-            w = w * (1 + ri) / (1 + gross)
-            r_i = gross
         tgt = None
         if rev[i] and not np.isnan(W[i]).any():
             tgt = last_tgt = W[i]
         elif check_daily and last_tgt is not None and w is not None:
             tgt = last_tgt
-        if tgt is not None and (w is None or out_of_band(tgt, w, i)):
-            prev = np.zeros(len(assets)) if w is None else w
-            to = float(np.abs(tgt - prev)[non_cash].sum())
-            cost = to * cost_bps / 1e4
-            r_i = (0.0 if np.isnan(r_i) else r_i) - cost
-            out_to[i] = to
-            out_tr[i] = True
+        cov_i = cov[i] if cov is not None else None
+        if w is None:
+            if tgt is None:
+                continue
+            # Entrada inicial: sense cartera prèvia, es compra l'objectiu sencer
+            to = float(np.abs(tgt)[non_cash].sum())
+            out_r[i], out_to[i], out_tr[i] = -to * cost_bps / 1e4, to, True
             w = tgt.copy()
-        out_r[i] = r_i
-        if w is not None:
-            held[i] = w
+        else:
+            res = step(w, R[i], tgt, trigger=trigger, cost_bps=cost_bps, non_cash=non_cash, cov_i=cov_i)
+            w = res.weights
+            out_r[i], out_to[i], out_tr[i] = res.gross - res.cost, res.turnover, res.traded
+        held[i] = w
     return SimResult(returns=pd.Series(out_r, index=idx), turnover=pd.Series(out_to, index=idx),
                      weights=pd.DataFrame(held, index=idx, columns=assets),
                      trades=pd.Series(out_tr, index=idx))
@@ -141,3 +177,17 @@ def simulate_cfg(targets: Targets, rets: pd.DataFrame, cfg, cov_cache: dict | No
                 cov_cache[key] = cov
     return simulate(targets, rets, cfg.cost_bps, cfg.band, rebalance=cfg.rebalance,
                     te_band=cfg.te_band, cov=cov, check_daily=cfg.check_daily)
+
+
+def lagged(targets: Targets, sessions: int = 1) -> Targets:
+    """Objectius executats `sessions` sessions més tard que la decisió (retard d'implementació).
+
+    El backtest suposa que es negocia al tancament del mateix dia en què es decideix, cosa que
+    a la pràctica no es pot fer: l'informe surt després del tancament. Amb `sessions=1`,
+    l'objectiu decidit al tancament de t s'executa al tancament de t+1 (com el paper trading).
+    """
+    if sessions <= 0:
+        return targets
+    return Targets(weights=targets.weights.shift(sessions),
+                   reviews=targets.reviews.shift(sessions, fill_value=False).astype(bool),
+                   log=targets.log)

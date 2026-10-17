@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # Tolerància relativa per detectar que l'adj_close històric ha canviat (nou dividend/split)
     adj_close_tolerance: float = 1e-5
 
+    # Paper trading: capital nocional per convertir pesos en imports i accions a l'informe diari
+    paper_capital: float = 10_000.0
+    paper_currency: str = "USD"
+
     @field_validator("data_dir", "universe_file", mode="after")
     @classmethod
     def _expand(cls, v: Path) -> Path:

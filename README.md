@@ -5,7 +5,7 @@ bull/bear), sectores en auge, y sugerencias de entrada, ampliación y reducción
 en fondos, acciones y opciones.
 
 El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture.md)).
-**Fase actual: construcción por régimen y paper trading (semanas 6-8).**
+**Fase actual: paper trading con informe diario (semana 8).**
 
 | Capa | Estado |
 |---|---|
@@ -14,7 +14,7 @@ El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture
 | 3. Regímenes: tendencia × volatilidad + crisis, exposición recomendada y validación ([docs](docs/regimes.md)) | ✅ |
 | 4. Señales: rotación sectorial por régimen, cobertura, acciones entrar/añadir/reducir/salir ([docs](docs/portfolio.md)) | ✅ |
 | 5. Cartera: asignación por régimen y walk-forward ✅; construcción condicionada al régimen (`rot_v2`, [resultado negativo](docs/portfolio.md#rot_v2-construcción-condicionada-al-régimen-semana-6)) ✅; bandas de no negociación (`rot_v1b`, [referencia actual](docs/portfolio.md#bandas-de-no-negociación-semana-7)) ✅; límites de riesgo y opciones | parcial |
-| 6. Alertas / ejecución | — |
+| 6. Paper trading congelado e informe diario ([docs](docs/paper.md)) ✅; alertas activas y ejecución real | parcial |
 
 ## Qué datos recoge
 
@@ -59,6 +59,8 @@ uv run fin regimes report                          # validación: backtest, abla
 uv run fin portfolio build                         # capas 4-5: rot_v1b y rot_v2 al registro de decisiones
 uv run fin portfolio show [--set rot_v2]           # cartera actual y cambios sugeridos
 uv run fin portfolio report                        # walk-forward contra referencias
+uv run fin paper update                            # semana 8: paper trading congelado
+uv run fin report daily                            # informe diario: qué hacer en la sesión siguiente
 uv run fin status
 uv run fin sql "SELECT * FROM prices_coverage ORDER BY last_date LIMIT 10"
 uv run pytest
@@ -104,6 +106,7 @@ src/finance/           código (comentarios en catalán)
   features/            capa 2: features point-in-time (mercado + panel sectorial)
   regimes/             capa 3: regímenes por reglas, exposición y validación
   portfolio/           capas 4-5: rotación sectorial, cobertura, motor walk-forward
+  paper/               semana 8: paper trading congelado e informe diario
 tests/                 pytest con proveedores simulados (sin red)
 deploy/                bootstrap del servidor, unidades systemd, backup
 docs/                  arquitectura y operación
