@@ -7,7 +7,7 @@ con ellas a través del lake (datos versionados) y del registro de ejecuciones.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 6. Ejecución / alertas     órdenes sugeridas: entrar, añadir, reducir, cubrir │  (futuro)
+│ 6. Paper / informe diario  órdenes para la sesión siguiente, registro congelado │  ✅ (parcial)
 │ 5. Cartera                 E·sectores + (1−E)·cobertura, motor walk-forward    │  ✅ (parcial)
 │ 4. Señales                 rotación sectorial por régimen, acciones sugeridas   │  ✅
 │ 3. Regímenes               tendencia × volatilidad + crisis → exposición        │  ✅
@@ -124,6 +124,8 @@ ejecución queda como `partial` con el error registrado.
 | `regimes_daily` | regime_set, date | year | régimen, exposición recomendada y acción (add/reduce/hold); se regenera entero |
 
 | `portfolio_targets` | strategy_set, date, symbol | year | registro de decisiones: cartera objetivo y acción (enter/add/reduce/exit/hold) en cada revisión |
+| `paper_book` | strategy_set, date, symbol | year | paper trading: posición tras el cierre, operación y objetivo vigente; **congelado** (no se reescribe) |
+| `paper_nav` | strategy_set, date | year | paper trading: valor, coste, operaciones y motivo de cada sesión; congelado |
 
 La capa de features se describe en [features.md](features.md), la de regímenes en
 [regimes.md](regimes.md) y la rotación y cartera en [portfolio.md](portfolio.md).

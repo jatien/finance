@@ -17,6 +17,8 @@ Exemples:
     fin portfolio build              # cartera objectiu i registre de decisions (capes 4-5)
     fin portfolio show               # cartera objectiu actual i últims canvis suggerits
     fin portfolio report             # informe HTML: walk-forward contra referències i ablacions
+    fin paper update|show|log        # paper trading congelat (setmana 8)
+    fin report daily                 # informe diari: què fer a la sessió següent
     fin status                       # estat del lake i dels últims jobs
     fin sql "SELECT * FROM job_status"
 """
@@ -377,6 +379,79 @@ def catalog() -> None:
     ctx = _ctx()
     ctx.refresh_catalog()
     console.print(str(ctx.settings.catalog_path))
+
+
+# ---------------------------------------------------------------------------------------
+# Setmana 8: paper trading i informe diari
+paper_app = typer.Typer(no_args_is_help=True, help="Paper trading congelat de les estratègies actives")
+app.add_typer(paper_app, name="paper")
+report_app = typer.Typer(no_args_is_help=True, help="Informes operatius")
+app.add_typer(report_app, name="report")
+
+
+@paper_app.command("update")
+def paper_update(
+    strategy_set: Annotated[list[str] | None, typer.Option("--set", help="Estratègia (repetible)")] = None,
+) -> None:
+    """Avança el paper trading fins a l'última sessió amb dades (no recalcula el passat)."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "paper", strategies=strategy_set))
+
+
+@paper_app.command("show")
+def paper_show(strategy_set: str | None = typer.Option(None, "--set", help="Per defecte, la de referència")) -> None:
+    """Cartera del paper trading, objectiu vigent i rendiment des de l'inici."""
+    from finance.paper.job import read_paper_book, read_paper_nav
+    from finance.portfolio.config import ACTIVE
+    ctx = _ctx()
+    name = strategy_set or ACTIVE[0].name
+    nav = read_paper_nav(ctx, name)
+    if nav.empty:
+        console.print(f"[yellow]{name}: sense paper trading (`fin paper update`)[/yellow]")
+        raise typer.Exit(1)
+    last = nav.iloc[-1]
+    bench = (1 + nav["benchmark_ret"].iloc[1:].fillna(0)).prod() - 1
+    console.print(f"[bold]{name}[/bold] · des del {last['inception']:%Y-%m-%d} · {len(nav) - 1} sessions · "
+                  f"NAV {last['nav']:.4f} ({last['nav'] - 1:+.2%}; SPY {bench:+.2%}) · "
+                  f"règim {last['regime']}")
+    book = read_paper_book(ctx, name, last["date"])
+    b = book[["symbol", "sleeve", "weight", "target_weight", "score_rank"]].copy()
+    for c in ("weight", "target_weight"):
+        b[c] = b[c].map("{:.1%}".format)
+    _print_df(b, f"Cartera al {last['date']:%Y-%m-%d}")
+    if last["pending_new"]:
+        console.print(f"Objectiu nou per a la sessió següent: {last['pending_reason']}")
+
+
+@paper_app.command("log")
+def paper_log(strategy_set: str | None = typer.Option(None, "--set"),
+              n: int = typer.Option(15, help="Operacions a mostrar")) -> None:
+    """Registre de decisions: sessions amb operacions i el motiu."""
+    from finance.paper.report import decision_log
+    from finance.portfolio.config import ACTIVE, STRATEGIES
+    ctx = _ctx()
+    cfgs = (STRATEGIES[strategy_set],) if strategy_set else ACTIVE
+    df = decision_log(ctx, cfgs, n)
+    if not df.empty:
+        df["rotació"] = df["rotació"].map("{:.1%}".format)
+        df["cost_pb"] = df["cost_pb"].map("{:.1f}".format)
+    _print_df(df, "Registre de decisions")
+
+
+@report_app.command("daily")
+def report_daily(
+    capital: float | None = typer.Option(None, help="Capital nocional (per defecte FIN_PAPER_CAPITAL)"),
+    out: str | None = typer.Option(None, help="Directori de sortida"),
+) -> None:
+    """Informe diari: ordres per a la sessió següent, règim, paper trading, salut de dades."""
+    from pathlib import Path
+
+    from finance.paper.report import build_daily, write_daily
+    ctx = _ctx()
+    rep = build_daily(ctx, capital=capital)
+    paths = write_daily(rep, Path(out) if out else ctx.settings.data_dir / "reports" / "daily")
+    console.print(paths["latest_md"].read_text(encoding="utf-8"))
+    console.print(f"[dim]{paths['html']}[/dim]")
 
 
 def _print_df(df: pd.DataFrame, title: str | None) -> None:

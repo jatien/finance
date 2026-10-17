@@ -1,5 +1,5 @@
 [Unit]
-Description=finance: pipeline diari (univers, preus, macro, qualitat, compactació)
+Description=finance: pipeline diari (preus, macro, qualitat, features, règims, cartera, paper trading, informe)
 Wants=network-online.target
 After=network-online.target
 

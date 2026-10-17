@@ -441,12 +441,85 @@ PORTFOLIO_TARGETS = DatasetSpec(
     snapshot_by=("strategy_set",),
 )
 
+# ---------------------------------------------------------------------------------------
+# Setmana 8: paper trading (registre congelat)
+# ---------------------------------------------------------------------------------------
+# A diferència de `portfolio_targets` (que es regenera sencer cada dia: és un backtest), el
+# paper trading és append-only de veritat: cada sessió s'escriu una sola vegada, amb les
+# dades disponibles aquell dia, i no es torna a escriure mai. Si el proveïdor corregeix preus
+# més endavant, el registre conserva el que es va decidir. `ingested_at` = quan es va decidir.
+
+PAPER_BOOK = DatasetSpec(
+    name="paper_book",
+    path="paper/book",
+    description=(
+        "Paper trading: posició de cada estratègia al tancament de `date`. `weight` = pes en "
+        "cartera després de negociar; `weight_pre` = després de la deriva, abans de negociar; "
+        "`trade` = weight - weight_pre (s'executa al tancament de `date`); `target_weight` = "
+        "objectiu vigent per a la sessió següent. Una fila per actiu amb pes o objectiu > 0."
+    ),
+    fields=[
+        pa.field("strategy_set", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("sleeve", pa.string(), nullable=False),
+        pa.field("weight", pa.float64(), nullable=False),
+        pa.field("weight_pre", pa.float64(), nullable=False),
+        pa.field("trade", pa.float64(), nullable=False),
+        pa.field("action", pa.string(), nullable=False),  # enter|add|reduce|exit|hold
+        pa.field("target_weight", pa.float64(), nullable=False),
+        pa.field("price", pa.float64()),  # adj_close de `date` (CASH = 1)
+        pa.field("score_rank", pa.int32()),  # rang del sector a la decisió vigent
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("strategy_set", "date", "symbol"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("strategy_set", "date", "symbol"),
+)
+
+PAPER_NAV = DatasetSpec(
+    name="paper_nav",
+    path="paper/nav",
+    description=(
+        "Paper trading: valor (base 1 a l'inici) i operacions de cada estratègia per sessió. "
+        "`reason` explica per què s'ha negociat; `pending_new` = s'ha decidit un objectiu nou "
+        "al tancament (s'executarà a la sessió següent, si supera el disparador)."
+    ),
+    fields=[
+        pa.field("strategy_set", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("inception", pa.date32(), nullable=False),
+        pa.field("nav", pa.float64(), nullable=False),
+        pa.field("ret_gross", pa.float64(), nullable=False),
+        pa.field("cost", pa.float64(), nullable=False),
+        pa.field("ret_net", pa.float64(), nullable=False),
+        pa.field("turnover", pa.float64(), nullable=False),
+        pa.field("traded", pa.bool_(), nullable=False),
+        pa.field("reason", pa.string()),
+        pa.field("distance", pa.float64()),  # distància al disparador abans de negociar
+        pa.field("distance_kind", pa.string()),  # te | max_abs
+        pa.field("pending_new", pa.bool_(), nullable=False),
+        pa.field("pending_from", pa.date32()),  # data de decisió de l'objectiu vigent
+        pa.field("pending_reason", pa.string()),
+        pa.field("regime", pa.string()),
+        pa.field("equity_exposure", pa.float64()),
+        pa.field("hedge", pa.string()),
+        pa.field("benchmark_ret", pa.float64()),  # retorn del mercat (SPY) de la sessió
+        pa.field("recorded_late", pa.bool_(), nullable=False),  # escrit en una recuperació
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("strategy_set", "date"),
+    partition=Partition("year", derive=_year_from("date")),
+    sort_by=("strategy_set", "date"),
+)
+
 REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
         PRICES_DAILY, CORPORATE_ACTIONS, OPTION_SNAPSHOTS, MACRO_OBSERVATIONS,
         UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
         DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY, REGIMES_DAILY, PORTFOLIO_TARGETS,
+        PAPER_BOOK, PAPER_NAV,
     )
 }
 
