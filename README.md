@@ -5,7 +5,7 @@ bull/bear), sectores en auge, y sugerencias de entrada, ampliación y reducción
 en fondos, acciones y opciones.
 
 El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture.md)).
-**Fase actual: paper trading con informe diario (semana 8).**
+**Fase actual: alertas activas y ejecución real (semana 11).**
 
 | Capa | Estado |
 |---|---|
@@ -14,7 +14,7 @@ El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture
 | 3. Regímenes: tendencia × volatilidad + crisis, exposición recomendada y validación ([docs](docs/regimes.md)) | ✅ |
 | 4. Señales: rotación sectorial por régimen, cobertura, acciones entrar/añadir/reducir/salir ([docs](docs/portfolio.md)) | ✅ |
 | 5. Cartera: asignación por régimen y walk-forward ✅; construcción condicionada al régimen (`rot_v2`, [resultado negativo](docs/portfolio.md#rot_v2-construcción-condicionada-al-régimen-semana-6)) ✅; bandas de no negociación (`rot_v1b`, [referencia actual](docs/portfolio.md#bandas-de-no-negociación-semana-7)) ✅; límites de riesgo y opciones | parcial |
-| 6. Paper trading congelado e informe diario ([docs](docs/paper.md)) ✅; alertas activas y ejecución real | parcial |
+| 6. Paper trading congelado e informe diario ([docs](docs/paper.md)) ✅; alertas activas y ejecución real con IBKR o manual ([docs](docs/ejecucion.md)) ✅ | ✅ |
 | Insiders: Form 4 de la SEC, compras en grupo/CEO, amplitud por sector y validación pre-registrada ([docs](docs/insiders.md), [resultado negativo](docs/insiders.md#resultados-17-oct-2026-resultado-negativo)) | ✅ (contexto, no decide) |
 
 ## Qué datos recoge
@@ -69,6 +69,8 @@ uv run fin ingest insiders                         # Form 4 de la SEC (requiere 
 uv run fin insiders build                          # eventos (compras en grupo, CEO/CFO) y amplitud
 uv run fin insiders show                           # eventos recientes y amplitud por sector
 uv run fin insiders report                         # validación: event study y criterios
+uv run fin alerts test                             # semana 11: prueba de alertas (ntfy/Telegram/correo)
+uv run fin exec status                             # ejecución real: planes, órdenes, cuenta
 uv run fin status
 uv run fin sql "SELECT * FROM prices_coverage ORDER BY last_date LIMIT 10"
 uv run pytest
@@ -116,7 +118,9 @@ src/finance/           código (comentarios en catalán)
   portfolio/           capas 4-5: rotación sectorial, cobertura, motor walk-forward
   paper/               semana 8: paper trading congelado e informe diario
   insiders/            semana 10: señales de insiders (Form 4) y su validación
+  execution/           semana 11: plan, salvaguardas, envío a IBKR, conciliación
+  alerts/              semana 11: reglas y envío de alertas con deduplicación
 tests/                 pytest con proveedores simulados (sin red)
-deploy/                bootstrap del servidor, unidades systemd, backup
+deploy/                bootstrap del servidor, unidades systemd, backup, IB Gateway
 docs/                  arquitectura y operación
 ```

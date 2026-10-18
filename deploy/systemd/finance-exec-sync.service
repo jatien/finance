@@ -1,0 +1,13 @@
+[Unit]
+Description=finance: execucions, estat de les ordres i foto del compte (setmana 11)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@FIN_USER@
+Group=@FIN_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+ExecStart=@APP_DIR@/.venv/bin/fin exec sync
+TimeoutStartSec=10min

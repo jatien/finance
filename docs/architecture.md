@@ -7,7 +7,7 @@ con ellas a través del lake (datos versionados) y del registro de ejecuciones.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│ 6. Paper / informe diario  órdenes para la sesión siguiente, registro congelado │  ✅ (parcial)
+│ 6. Paper / ejecución       registro congelado, informe, alertas, IBKR/manual   │  ✅
 │ 5. Cartera                 E·sectores + (1−E)·cobertura, motor walk-forward    │  ✅ (parcial)
 │ 4. Señales                 rotación sectorial por régimen, acciones sugeridas   │  ✅
 │ 3. Regímenes               tendencia × volatilidad + crisis → exposición        │  ✅
@@ -119,6 +119,11 @@ ejecución queda como `partial` con el error registrado.
 | `instruments` | symbol, as_of_date | — | sector, industria, categoría de fondo, tamaño, beta |
 | `ingest_runs` | run_id | — | registro de cada ejecución |
 | `dq_results` | run_id, dataset, check_name, key | — | violaciones de calidad |
+| `exec_plans` | plan_id | — | planes de ejecución real; cada cambio de estado, una fila |
+| `exec_orders` | plan_id, symbol | — | órdenes de cada plan: límite, ejecución, *slippage* |
+| `exec_fills` | exec_id | year | ejecuciones del bróker o manuales y movimientos de efectivo |
+| `exec_account` | account, date | — | foto diaria de la cuenta real |
+| `alerts_sent` | alert_key | — | alertas enviadas (deduplicación) |
 | `features_daily` | feature_set, feature, date | year | features de mercado + percentil expansivo; se regenera entera |
 | `sector_features_daily` | feature_set, symbol, feature, date | year | panel sectorial + percentil transversal; se regenera entero |
 

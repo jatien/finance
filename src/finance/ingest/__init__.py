@@ -7,6 +7,8 @@ from datetime import timedelta
 
 import pandas as pd
 
+from finance.alerts.job import AlertsJob
+from finance.execution.job import ExecJob
 from finance.features.job import FeaturesJob
 from finance.ingest.insiders import InsidersJob
 from finance.ingest.macro import MacroJob
@@ -29,7 +31,7 @@ JOBS: dict[str, type[Job]] = {
     j.name: j for j in (PricesJob, OptionsJob, MacroJob, UniverseJob, UniverseHistoryJob,
                         InstrumentsJob, QualityJob, CompactJob, FeaturesJob,
                         RegimesJob, PortfolioJob, PaperJob, ReportJob, InsidersJob,
-                        InsiderSignalsJob)
+                        InsiderSignalsJob, ExecJob, AlertsJob)
 }
 
 UNIVERSE_MAX_AGE = timedelta(days=7)
@@ -49,7 +51,7 @@ def universe_is_stale(ctx: Context) -> bool:
 
 
 def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
-    """Pipeline de tancament: univers (si cal) → preus → macro → qualitat → insiders → features → règims → cartera → paper → compactació → informe."""
+    """Pipeline de tancament: univers (si cal) → preus → macro → qualitat → insiders → features → règims → cartera → paper → compactació → informe → execució (sync + pla) → alertes."""
     reports = []
     if universe_is_stale(ctx):
         reports.append(run_job(ctx, "universe", refresh_catalog=False))
@@ -68,7 +70,21 @@ def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
     reports.append(run_job(ctx, "paper", refresh_catalog=False))
     reports.append(run_job(ctx, "compact", min_files=8))
     reports.append(run_job(ctx, "report", refresh_catalog=False))
+    # Setmana 11: execució real (si està activada) i alertes. L'execució no atura el pipeline.
+    if ctx.settings.exec_mode != "off":
+        reports.append(run_job(ctx, "exec", refresh_catalog=False, action="sync"))
+        reports.append(run_job(ctx, "exec", refresh_catalog=False, action="plan"))
+    reports.append(run_job(ctx, "alerts"))
+    healthcheck(ctx, reports)
     return reports
+
+
+def healthcheck(ctx: Context, reports: list[RunReport]) -> None:
+    """Ping al servei de vigilància: si el servidor cau o el pipeline falla, avisa ell."""
+    url = ctx.settings.alert_healthcheck_url
+    if url:
+        from finance.providers.notify import ping
+        ping(url, "/fail" if any(r.status == "failed" for r in reports) else "")
 
 
 def weekly_pipeline(ctx: Context) -> list[RunReport]:

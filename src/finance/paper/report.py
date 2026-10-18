@@ -119,6 +119,7 @@ class DailyReport:
     capital: float
     currency: str
     insiders: dict[str, Any] | None = None  # context d'insiders (no modifica les ordres)
+    execution: dict[str, Any] = field(default_factory=dict)  # setmana 11 (buit si FIN_EXEC_MODE=off)
 
     @property
     def tradable(self) -> bool:
@@ -171,13 +172,23 @@ def build_daily(ctx, capital: float | None = None, currency: str | None = None,
         hist = g.tail(6).iloc[::-1].reset_index(drop=True)
 
     bt, curves = backtest_context(inputs, targets, strategies)
+    execution: dict[str, Any] = {}
+    if ctx.settings.exec_mode != "off":
+        from finance.execution.summary import exec_summary
+        try:
+            v_ex = next((v for v in views if v.cfg.name == (ctx.settings.exec_strategy or ref.name)), views[0])
+            execution = exec_summary(ctx, v_ex.nav)
+        except Exception as e:  # noqa: BLE001 — l'informe no ha de caure per l'execució
+            issues.append(("warn", f"resum d'execució no disponible: {type(e).__name__}: {e}"))
+        if execution.get("halted"):
+            issues.append(("warn", f"execució real ATURADA: {execution['halted']}"))
     return DailyReport(
         generated_at=now, data_date=data_date, expected_session=expected, sessions_behind=behind,
         issues=issues, regime=regime, regime_history=hist, strategies=views,
         log=decision_log(ctx, strategies), backtest=bt, backtest_curves=curves,
         market=market_snapshot(ctx, ref), ranking=sector_ranking(inp0, ref, views[0]),
         next_review=next_review(data_date), capital=capital, currency=currency,
-        insiders=insider_context(ctx, views[0], data_date))
+        insiders=insider_context(ctx, views[0], data_date), execution=execution)
 
 
 # ---------------------------------------------------------------------------------------
@@ -231,7 +242,7 @@ def data_issues(ctx, now: pd.Timestamp, data_date, expected: pd.Timestamp, behin
     except Exception:  # noqa: BLE001
         runs = pd.DataFrame()
     for r in runs.itertuples():
-        if r.job in ("report", "options"):
+        if r.job in ("report", "options", "exec", "alerts"):
             continue
         if r.status == "failed":
             issues.append(("error", f"el job `{r.job}` ha fallat a l'última execució"))
@@ -627,6 +638,7 @@ recalcula mai. "Recalculat vs registre" compara amb el que donaria el mateix mot
 {perf_html}
 {paper_chart}
 
+{_exec_html(rep.execution)}
 <h2>4. Registre de decisions</h2>
 {log}
 
@@ -674,6 +686,49 @@ def _insiders_html(rep: DailyReport) -> str:
 les estratègies congelades no la fan servir.</p>
 <div class="grid2"><div><h3>Esdeveniments recents al S&amp;P 500</h3><div class="wrap">{ev_html}</div></div>
 <div><h3>Amplitud per sector (63 sessions)</h3><div class="wrap">{br_html}</div></div></div>"""
+EXEC_STATUS = {"planned": "pendent d'executar a mà", "awaiting_approval": "PENDENT D'APROVACIÓ",
+               "approved": "aprovat (s'envia a les 16:45)", "submitted": "enviat", "done": "executat",
+               "partial": "executat parcialment", "expired": "no executat (caducat)", "rejected": "descartat",
+               "blocked": "BLOQUEJAT", "no_trade": "sense ordres"}
+
+
+def _exec_html(ex: dict[str, Any]) -> str:
+    if not ex:
+        return ""
+    cur = ex.get("account", {}).get("currency", "EUR")
+    head = (f"<p class='muted'>Mode <b>{_e(ex['mode'])}</b> · estratègia {_e(ex['strategy'])}"
+            + (f" · <b style='color:{BAD_INK}'>ATURADA: {_e(ex['halted'])}</b>" if ex.get("halted") else "") + "</p>")
+    kp = []
+    a = ex.get("account")
+    if a:
+        kp.append(f"<div class='kpi'><span>Valor del compte ({_e(a['account'])})</span><b>{_money(a['value'], cur)}</b></div>")
+        kp.append(f"<div class='kpi'><span>Real des del {a['since']:%d-%m-%Y} ({cur})</span><b>{a['ret']:+.2%}</b></div>")
+        if pd.notna(a.get("paper_ret", np.nan)):
+            kp.append(f"<div class='kpi'><span>Paper mateix període (USD)</span><b>{a['paper_ret']:+.2%}</b></div>")
+    if pd.notna(ex.get("slippage_bps", np.nan)):
+        kp.append(f"<div class='kpi'><span>Slippage mitjà vs referència</span><b>{ex['slippage_bps']:+.1f} pb</b></div>")
+        kp.append(f"<div class='kpi'><span>Comissions</span><b>{_money(ex['commission'], cur)}</b></div>")
+    lp = ex.get("last_plan")
+    plan_html = "<p class='muted'>Encara no hi ha cap pla amb ordres.</p>"
+    if lp:
+        o = ex["orders"]
+        if not o.empty:
+            o = o[["symbol", "ticker", "side", "quantity", "ref_price", "limit_price", "status", "filled_qty",
+                   "avg_price", "slippage_bps", "message"]].rename(columns={"slippage_bps": "slippage (pb)"})
+        plan_html = (f"<p>Últim pla <b>{_e(lp['plan_id'])}</b>: {_e(EXEC_STATUS.get(lp['status'], lp['status']))}"
+                     + (f" · {_e(lp['blockers'])}" if lp.get("blockers") else "") + "</p>"
+                     + _table(o, {"quantity": "{:,.0f}", "ref_price": "{:,.3f}", "limit_price": "{:,.3f}",
+                                  "filled_qty": "{:,.0f}", "avg_price": "{:,.3f}", "slippage (pb)": "{:+.1f}"}))
+    plans = ex.get("plans")
+    hist = ""
+    if plans is not None and not plans.empty:
+        h = plans[["plan_id", "session", "status", "reason"]].copy()
+        h["session"] = h["session"].dt.date
+        h["status"] = h["status"].map(lambda x: EXEC_STATUS.get(x, x))
+        hist = f"<details><summary>Últims plans</summary>{_table(h)}</details>"
+    return (f"<h2>3b. Execució real</h2>{head}<div class='kpis'>{''.join(kp)}</div>{plan_html}{hist}"
+            "<p class='muted'>El compte real opera els UCITS de Xetra en EUR; el paper, els ETF dels EUA en USD: "
+            "la diferència inclou el canvi EUR/USD i el retard d'execució (Xetra ~16:45 vs tancament de NY).</p>")
 
 
 def render_text(rep: DailyReport) -> str:
@@ -703,16 +758,59 @@ def render_text(rep: DailyReport) -> str:
         for r in ins["events"].itertuples():
             L.append(f"  {r.signal_date:%Y-%m-%d} {r.symbol:<6} {r.event:<13} {r.n_insiders} insiders "
                      f"{r.value / 1e6:,.2f} M$")
+    ex = rep.execution
+    if ex:
+        L += ["", f"## Execució real ({ex['mode']})" + (f" · ATURADA: {ex['halted']}" if ex.get("halted") else "")]
+        lp = ex.get("last_plan")
+        if lp:
+            L.append(f"Últim pla {lp['plan_id']}: {EXEC_STATUS.get(lp['status'], lp['status'])}"
+                     + (f" — {lp['blockers']}" if lp.get("blockers") else ""))
+        a = ex.get("account")
+        if a:
+            L.append(f"Compte {a['account']}: {_money(a['value'], a['currency'])} ({a['ret']:+.2%} des del {a['since']:%Y-%m-%d})")
     return "\n".join(L) + "\n"
+
+
+def report_facts(rep: DailyReport) -> dict[str, Any]:
+    """Fets de l'informe en JSON (`latest.json`): el job d'alertes els llegeix sense recalcular."""
+    def d(x):
+        return None if x is None or pd.isna(x) else f"{pd.Timestamp(x):%Y-%m-%d}"
+    strategies = []
+    for k, v in enumerate(rep.strategies):
+        item: dict[str, Any] = {"name": v.cfg.name, "reference": k == 0, "started": v.state is not None}
+        if v.state is not None:
+            navs = v.nav.set_index("date")["nav"] if not v.nav.empty else pd.Series(dtype=float)
+            peak_date = navs.idxmax() if len(navs) else None
+            item.update(
+                decision_date=d(v.state.date), will_trade=bool(v.will_trade), order_note=v.order_note,
+                orders=[{"symbol": o.symbol, "action": o.action, "current": o.current, "target": o.target,
+                         "amount": o.amount, "shares": None if pd.isna(o.shares) else o.shares} for o in v.orders],
+                ret=v.perf.get("ret"), bench_ret=v.perf.get("bench_ret"), max_dd=v.perf.get("max_dd"),
+                value=v.perf.get("value"), sessions=v.perf.get("sessions"),
+                dd_now=float(navs.iloc[-1] / navs.max() - 1) if len(navs) else None, peak_date=d(peak_date))
+        strategies.append(item)
+    rg = dict(rep.regime)
+    return {"generated_at": f"{rep.generated_at:%Y-%m-%dT%H:%M:%S%z}", "data_date": d(rep.data_date),
+            "expected_session": d(rep.expected_session), "sessions_behind": rep.sessions_behind,
+            "tradable": rep.tradable, "issues": [list(i) for i in rep.issues],
+            "regime": {"regime": rg.get("regime"), "label": rg.get("label"), "exposure": rg.get("exposure"),
+                       "days": rg.get("days"), "changed_today": rg.get("changed_today", False),
+                       "previous": rg.get("previous"),
+                       "previous_label": REGIME_LABELS.get(rg.get("previous"), rg.get("previous"))} if rg else {},
+            "strategies": strategies, "capital": rep.capital, "currency": rep.currency,
+            "next_review": d(rep.next_review)}
 
 
 def write_daily(rep: DailyReport, out_dir: Path) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     html = render_html(rep)
     text = render_text(rep)
+    facts = json.dumps(report_facts(rep), ensure_ascii=False, indent=1, default=float)
     dated = out_dir / f"{rep.data_date:%Y-%m-%d}.html"
-    paths = {"html": dated, "latest_html": out_dir / "latest.html", "latest_md": out_dir / "latest.md"}
-    for p, content in ((dated, html), (paths["latest_html"], html), (paths["latest_md"], text)):
+    paths = {"html": dated, "latest_html": out_dir / "latest.html", "latest_md": out_dir / "latest.md",
+             "latest_json": out_dir / "latest.json"}
+    for p, content in ((dated, html), (paths["latest_html"], html), (paths["latest_md"], text),
+                       (paths["latest_json"], facts)):
         tmp = p.with_suffix(p.suffix + ".tmp")
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(p)

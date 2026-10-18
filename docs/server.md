@@ -165,3 +165,15 @@ El lake está particionado y es solo-anexar; DuckDB lee Parquet en paralelo y po
 Escala bien a decenas de GB en un solo equipo. Si en el futuro se entrena en GPU u otra
 máquina, basta con montar el lake (NFS/SSHFS) o sincronizarlo con `rsync`: el formato no
 depende de este servidor.
+
+## Alertas y ejecución real (semana 11)
+
+Con `FIN_EXEC_MODE=manual|ibkr` en `/etc/finance/finance.env`, `bootstrap.sh` activa dos
+timers más: `finance-exec-submit` (16:45 Madrid, envía las órdenes) y `finance-exec-sync`
+(17:50, concilia). Las alertas salen al final de `finance-daily` sin timer propio. IB Gateway
+corre en Docker y solo escucha en `127.0.0.1`. Todo en [ejecucion.md](ejecucion.md).
+
+```bash
+systemctl list-timers 'finance-exec-*'
+journalctl -u finance-exec-submit -n 50
+```

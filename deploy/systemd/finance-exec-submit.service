@@ -1,0 +1,14 @@
+[Unit]
+Description=finance: envia a IBKR les ordres del pla d'avui (setmana 11)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@FIN_USER@
+Group=@FIN_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ENV_FILE@
+# Amb FIN_EXEC_MODE=off o manual no fa res (el job ho registra com a "skipped")
+ExecStart=@APP_DIR@/.venv/bin/fin exec submit
+TimeoutStartSec=30min

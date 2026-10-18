@@ -21,6 +21,8 @@ Exemples:
     fin insiders build|show|report   # senyals d'insiders, estat actual i validació (setmana 10)
     fin paper update|show|log        # paper trading congelat (setmana 8)
     fin report daily                 # informe diari: què fer a la sessió següent
+    fin exec status|plan|approve|submit|sync|fill|halt   # execució real (setmana 11)
+    fin alerts test|run              # alertes actives (ntfy, Telegram, correu)
     fin status                       # estat del lake i dels últims jobs
     fin sql "SELECT * FROM job_status"
 """
@@ -527,6 +529,130 @@ def report_daily(
     paths = write_daily(rep, Path(out) if out else ctx.settings.data_dir / "reports" / "daily")
     console.print(paths["latest_md"].read_text(encoding="utf-8"))
     console.print(f"[dim]{paths['html']}[/dim]")
+
+
+# ---------------------------------------------------------------------------------------
+# Setmana 11: execució real i alertes
+exec_app = typer.Typer(no_args_is_help=True, help="Execució real (IBKR o manual) de l'estratègia de referència")
+app.add_typer(exec_app, name="exec")
+alerts_app = typer.Typer(no_args_is_help=True, help="Alertes actives (ntfy, Telegram, correu)")
+app.add_typer(alerts_app, name="alerts")
+
+
+def _exec(action: str, **params) -> None:
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "exec", action=action, **params))
+
+
+@exec_app.command("status")
+def exec_status(n: int = typer.Option(5, help="Plans a mostrar")) -> None:
+    """Mode, aturada, últims plans i les seves ordres, i el compte real."""
+    from finance.execution.job import exec_strategy, read_account, read_orders, read_plans
+    ctx = _ctx()
+    s = ctx.settings
+    halt = s.halt_file.read_text(encoding="utf-8").strip() if s.halt_file.exists() else None
+    console.print(f"Mode [bold]{s.exec_mode}[/bold] · estratègia {exec_strategy(s).name} · "
+                  + (f"[red]ATURADA: {escape(halt)}[/red]" if halt else "[green]sense aturada[/green]")
+                  + (f" · compte real permès ({s.exec_account})" if s.exec_live else ""))
+    plans = read_plans(ctx)
+    if plans.empty:
+        console.print("[dim]sense plans (`fin exec plan`)[/dim]")
+        return
+    show = plans.tail(n).iloc[::-1].copy()
+    for c in ("decision_date", "session"):
+        show[c] = show[c].dt.date
+    for c in ("max_deviation", "turnover"):
+        show[c] = show[c].map(lambda x: "" if pd.isna(x) else f"{x:.1%}")
+    _print_df(show[["plan_id", "session", "status", "account", "managed_value", "max_deviation", "turnover",
+                    "reason", "blockers"]], "Plans")
+    orders = read_orders(ctx, show["plan_id"].iloc[0])
+    if not orders.empty:
+        _print_df(orders[["symbol", "ticker", "side", "quantity", "ref_price", "limit_price", "status", "filled_qty",
+                          "avg_price", "slippage_bps", "message"]], f"Ordres de {show['plan_id'].iloc[0]}")
+    acc = read_account(ctx)
+    if not acc.empty:
+        a = acc.tail(5).copy()
+        a["date"] = a["date"].dt.date
+        _print_df(a[["account", "date", "net_liquidation", "cash", "net_flows", "positions"]], "Compte")
+
+
+@exec_app.command("plan")
+def exec_plan(strategy_set: str | None = typer.Option(None, "--set"),
+              force: bool = typer.Option(False, help="Planifica encara que el paper no operi")) -> None:
+    """Pla per a la sessió següent de Xetra (el pipeline diari ho fa sol)."""
+    _exec("plan", strategy=strategy_set, force=force or None)
+
+
+@exec_app.command("approve")
+def exec_approve(plan_id: str) -> None:
+    """Aprova un pla pendent (obligatori amb compte real)."""
+    _exec("approve", plan_id=plan_id)
+
+
+@exec_app.command("reject")
+def exec_reject(plan_id: str) -> None:
+    """Descarta un pla: no s'enviarà."""
+    _exec("reject", plan_id=plan_id)
+
+
+@exec_app.command("submit")
+def exec_submit() -> None:
+    """Envia les ordres del pla d'avui a IBKR (vendes, espera, compres). Ho fa el timer de les 16:45."""
+    _exec("submit")
+
+
+@exec_app.command("sync")
+def exec_sync() -> None:
+    """Execucions i estat de les ordres del broker; foto del compte."""
+    _exec("sync")
+
+
+@exec_app.command("fill")
+def exec_fill(instrument: str = typer.Argument(..., help="Ticker (ZPDT) o sèrie (XLK)"),
+              side: str = typer.Argument(..., help="BUY | SELL"),
+              quantity: float = typer.Argument(...), price: float = typer.Argument(...),
+              fee: float = typer.Option(0.0, "--fee", help="Comissió"),
+              when: str | None = typer.Option(None, help="Data i hora (Madrid), p. ex. '2026-10-19 16:52'")) -> None:
+    """Mode manual: apunta una execució feta a IBKR."""
+    _exec("fill", ident=instrument, side=side, quantity=quantity, price=price, fee=fee, when=when)
+
+
+@exec_app.command("deposit")
+def exec_deposit(amount: float) -> None:
+    """Mode manual: aportació d'efectiu al compte."""
+    _exec("deposit", amount=amount)
+
+
+@exec_app.command("withdraw")
+def exec_withdraw(amount: float) -> None:
+    """Mode manual: retirada d'efectiu del compte."""
+    _exec("withdraw", amount=amount)
+
+
+@exec_app.command("halt")
+def exec_halt(reason: str = typer.Argument("", help="Motiu")) -> None:
+    """Atura l'enviament d'ordres i cancel·la les vives (interruptor d'emergència)."""
+    _exec("halt", reason=reason)
+
+
+@exec_app.command("resume")
+def exec_resume() -> None:
+    """Reprèn l'execució després d'una aturada."""
+    _exec("resume")
+
+
+@alerts_app.command("test")
+def alerts_test() -> None:
+    """Envia una alerta de prova per tots els canals configurats."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "alerts", test=True))
+
+
+@alerts_app.command("run")
+def alerts_run() -> None:
+    """Avalua les regles amb l'últim informe i envia les alertes noves."""
+    from finance.ingest import run_job
+    _exit(run_job(_ctx(), "alerts"))
 
 
 def _print_df(df: pd.DataFrame, title: str | None) -> None:

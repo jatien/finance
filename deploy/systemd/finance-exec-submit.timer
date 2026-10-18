@@ -1,0 +1,13 @@
+[Unit]
+Description=finance: enviament d'ordres durant la sessió de Xetra
+
+[Timer]
+# 16:45 a Madrid: 45 min abans del tancament de Xetra (17:30). Prou temps per a les vendes,
+# l'espera de 10 min i les compres, i el més a prop possible del tancament de NY que fa servir
+# el paper trading sense entrar a la subhasta de tancament.
+OnCalendar=Mon..Fri *-*-* 16:45:00 Europe/Madrid
+# Sense Persistent: si l'ordinador estava apagat, NO s'envien ordres fora d'hora
+Persistent=false
+
+[Install]
+WantedBy=timers.target

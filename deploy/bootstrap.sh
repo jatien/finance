@@ -53,7 +53,8 @@ if ! as_user "command -v uv" &>/dev/null; then
 fi
 UV="$(as_user 'command -v uv || echo ~/.local/bin/uv')"
 # uv descarrega la versió de Python de .python-version (no depèn del Python de Debian)
-as_user "cd '$APP_DIR' && '$UV' sync --locked --no-dev"
+# viz: gràfics de l'informe diari (plotly); broker: execució real amb IBKR (ib_async)
+as_user "cd '$APP_DIR' && '$UV' sync --locked --no-dev --extra viz --extra broker"
 
 log "Configuració ($ENV_FILE)"
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -78,6 +79,11 @@ as_user "set -a; source '$ENV_FILE'; set +a; cd '$APP_DIR' && .venv/bin/fin init
 if [[ "${NO_TIMERS:-0}" != "1" ]]; then
     log "Activant timers"
     systemctl enable --now finance-daily.timer finance-options.timer finance-weekly.timer
+    if grep -qE '^FIN_EXEC_MODE=(manual|ibkr)' "$ENV_FILE"; then
+        systemctl enable --now finance-exec-submit.timer finance-exec-sync.timer
+    else
+        log "execució real desactivada: FIN_EXEC_MODE=manual|ibkr a $ENV_FILE (docs/ejecucion.md)"
+    fi
     if grep -qE '^FIN_BACKUP_(TARGET|RESTIC_REPO)=.+' "$ENV_FILE"; then
         systemctl enable --now finance-backup.timer
     else
@@ -89,6 +95,7 @@ cat <<EOF
 
 Fet. Pròxims passos:
   1. Clau FRED (gratuïta) a $ENV_FILE: FIN_FRED_API_KEY=...
+     Alertes (ntfy/Telegram/correu) i execució real: docs/ejecucion.md
   2. Càrrega inicial (uns minuts):  sudo systemctl start finance-weekly.service && sudo systemctl start finance-daily.service
   3. Seguiment:                      journalctl -u 'finance-*' -f
   4. Estat:                          systemctl list-timers 'finance-*'
