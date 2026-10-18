@@ -124,3 +124,29 @@ class InstrumentProvider(ABC):
     @abstractmethod
     def fetch_info(self, symbol: str) -> dict[str, Any]:
         """Diccionari amb les columnes del dataset `instruments` (sense symbol/as_of_date)."""
+
+
+class InsiderProvider(ABC):
+    """Operacions d'insiders (formularis 4/5 de la SEC) normalitzades a `INSIDER_COLUMNS`."""
+
+    name: str
+
+    @abstractmethod
+    def list_quarters(self) -> list[Any]:
+        """Datasets trimestrals disponibles (objectes amb `year`, `quarter`, `key`)."""
+
+    @abstractmethod
+    def fetch_quarter(self, q: Any) -> pd.DataFrame:
+        """Totes les operacions no derivades d'un trimestre."""
+
+    def index_days(self, year: int, quarter: int) -> set[date] | None:
+        """Dies amb índex diari publicat en un trimestre (None = desconegut: prova'ls tots)."""
+        return None
+
+    @abstractmethod
+    def daily_index(self, day: date) -> pd.DataFrame:
+        """Presentacions d'un dia: form_type, name, cik, date_filed, path, accession_number."""
+
+    @abstractmethod
+    def fetch_filing(self, path: str, accession: str, filing_date: date) -> pd.DataFrame:
+        """Operacions d'una presentació concreta (via XML)."""

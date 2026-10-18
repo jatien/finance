@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     yahoo_max_workers: int = 4
     yahoo_batch_size: int = 50
     fred_rate_per_sec: float = 1.5
+    # SEC EDGAR (insiders): User-Agent obligatori "Nom correu"; màxim oficial 10 peticions/s
+    sec_user_agent: str | None = None
+    sec_rate_per_sec: float = 5.0
+    # Primer any de l'històric d'insiders (datasets trimestrals des del 2003)
+    insider_start_year: int = 2006
+    # Dies màxims que el job diari recupera via XML després de l'últim trimestre publicat
+    insider_max_daily_days: int = 120
 
     # Ingesta incremental: dies que es tornen a baixar per cobrir correccions del proveïdor
     price_overlap_days: int = 10

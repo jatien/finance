@@ -8,12 +8,14 @@ from datetime import timedelta
 import pandas as pd
 
 from finance.features.job import FeaturesJob
+from finance.ingest.insiders import InsidersJob
 from finance.ingest.macro import MacroJob
 from finance.ingest.maintenance import CompactJob
 from finance.ingest.options import OptionsJob
 from finance.ingest.prices import PricesJob
 from finance.ingest.reference import InstrumentsJob, UniverseJob
 from finance.ingest.universe_history import UniverseHistoryJob
+from finance.insiders.job import InsiderSignalsJob
 from finance.jobs import Context, Job, RunReport
 from finance.paper.job import PaperJob
 from finance.paper.report import ReportJob
@@ -26,7 +28,8 @@ log = logging.getLogger(__name__)
 JOBS: dict[str, type[Job]] = {
     j.name: j for j in (PricesJob, OptionsJob, MacroJob, UniverseJob, UniverseHistoryJob,
                         InstrumentsJob, QualityJob, CompactJob, FeaturesJob,
-                        RegimesJob, PortfolioJob, PaperJob, ReportJob)
+                        RegimesJob, PortfolioJob, PaperJob, ReportJob, InsidersJob,
+                        InsiderSignalsJob)
 }
 
 UNIVERSE_MAX_AGE = timedelta(days=7)
@@ -46,7 +49,7 @@ def universe_is_stale(ctx: Context) -> bool:
 
 
 def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
-    """Pipeline de tancament: univers (si cal) → preus → macro → qualitat → features → règims → cartera → paper → compactació → informe."""
+    """Pipeline de tancament: univers (si cal) → preus → macro → qualitat → insiders → features → règims → cartera → paper → compactació → informe."""
     reports = []
     if universe_is_stale(ctx):
         reports.append(run_job(ctx, "universe", refresh_catalog=False))
@@ -54,6 +57,9 @@ def daily_pipeline(ctx: Context, *, full: bool = False) -> list[RunReport]:
     reports.append(run_job(ctx, "prices", refresh_catalog=False, full=full))
     reports.append(run_job(ctx, "macro", refresh_catalog=False, full=full))
     reports.append(run_job(ctx, "dq", refresh_catalog=False))
+    # Insiders (SEC Form 4): s'omet sense FIN_SEC_USER_AGENT; no afecta les estratègies congelades
+    reports.append(run_job(ctx, "insiders", refresh_catalog=False))
+    reports.append(run_job(ctx, "insider_signals", refresh_catalog=False))
     # Les features llegeixen el lake a través del catàleg en memòria (sempre al dia)
     reports.append(run_job(ctx, "features", refresh_catalog=False))
     reports.append(run_job(ctx, "regimes", refresh_catalog=False))

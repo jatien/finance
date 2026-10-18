@@ -15,6 +15,7 @@ El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture
 | 4. Señales: rotación sectorial por régimen, cobertura, acciones entrar/añadir/reducir/salir ([docs](docs/portfolio.md)) | ✅ |
 | 5. Cartera: asignación por régimen y walk-forward ✅; construcción condicionada al régimen (`rot_v2`, [resultado negativo](docs/portfolio.md#rot_v2-construcción-condicionada-al-régimen-semana-6)) ✅; bandas de no negociación (`rot_v1b`, [referencia actual](docs/portfolio.md#bandas-de-no-negociación-semana-7)) ✅; límites de riesgo y opciones | parcial |
 | 6. Paper trading congelado e informe diario ([docs](docs/paper.md)) ✅; alertas activas y ejecución real | parcial |
+| Insiders: Form 4 de la SEC, compras en grupo/CEO, amplitud por sector y validación pre-registrada ([docs](docs/insiders.md), [resultado negativo](docs/insiders.md#resultados-17-oct-2026-resultado-negativo)) | ✅ (contexto, no decide) |
 
 ## Qué datos recoge
 
@@ -33,6 +34,9 @@ El proyecto se construye por capas (ver [docs/architecture.md](docs/architecture
   de [fja05680/sp500](https://github.com/fja05680/sp500), enlazada con fotos semanales
   propias de Wikipedia (con sector/subindustria GICS) para el tramo reciente.
 - **Metadatos** de instrumentos (sector, industria, categoría de fondo, tamaño, beta).
+- **Operaciones de insiders (SEC Form 4/5) desde 2006**: compras y ventas de consejeros y
+  directivos de todos los emisores (datasets trimestrales de la SEC) y, para el S&P 500, al
+  día siguiente vía EDGAR. Con marca de plan 10b5-1 y fecha de presentación (point-in-time).
 
 Todo con esquema validado, auditoría por fila (`source`, `ingested_at`, `run_id`) y un
 registro de cada ejecución (`ingest_runs`) con parámetros, errores y versión del código.
@@ -61,6 +65,10 @@ uv run fin portfolio show [--set rot_v2]           # cartera actual y cambios su
 uv run fin portfolio report                        # walk-forward contra referencias
 uv run fin paper update                            # semana 8: paper trading congelado
 uv run fin report daily                            # informe diario: qué hacer en la sesión siguiente
+uv run fin ingest insiders                         # Form 4 de la SEC (requiere FIN_SEC_USER_AGENT)
+uv run fin insiders build                          # eventos (compras en grupo, CEO/CFO) y amplitud
+uv run fin insiders show                           # eventos recientes y amplitud por sector
+uv run fin insiders report                         # validación: event study y criterios
 uv run fin status
 uv run fin sql "SELECT * FROM prices_coverage ORDER BY last_date LIMIT 10"
 uv run pytest
@@ -99,7 +107,7 @@ sudo FIN_USER=$USER bash deploy/bootstrap.sh
 ```
 config/universe.yaml   universo de instrumentos, opciones y series macro
 src/finance/           código (comentarios en catalán)
-  providers/           Yahoo, FRED, Wikipedia (intercambiables)
+  providers/           Yahoo, FRED, Wikipedia, SEC EDGAR (intercambiables)
   storage/             lake Parquet + catálogo DuckDB
   ingest/              jobs de ingesta
   quality/             controles de calidad
@@ -107,6 +115,7 @@ src/finance/           código (comentarios en catalán)
   regimes/             capa 3: regímenes por reglas, exposición y validación
   portfolio/           capas 4-5: rotación sectorial, cobertura, motor walk-forward
   paper/               semana 8: paper trading congelado e informe diario
+  insiders/            semana 10: señales de insiders (Form 4) y su validación
 tests/                 pytest con proveedores simulados (sin red)
 deploy/                bootstrap del servidor, unidades systemd, backup
 docs/                  arquitectura y operación

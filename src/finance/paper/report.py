@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,8 @@ from finance.portfolio.evaluation import regime_on_market
 from finance.portfolio.job import load_inputs
 from finance.regimes.job import read_regimes
 from finance.regimes.report import REGIME_LABELS
+
+log = logging.getLogger(__name__)
 
 # Paleta categòrica validada (scripts/validate_palette.js): ordre fix, mai cíclica.
 # El verd queda per sota de 3:1 de contrast: per això cada gràfic té etiquetes directes i taula.
@@ -115,6 +118,7 @@ class DailyReport:
     next_review: pd.Timestamp | None
     capital: float
     currency: str
+    insiders: dict[str, Any] | None = None  # context d'insiders (no modifica les ordres)
 
     @property
     def tradable(self) -> bool:
@@ -172,12 +176,44 @@ def build_daily(ctx, capital: float | None = None, currency: str | None = None,
         issues=issues, regime=regime, regime_history=hist, strategies=views,
         log=decision_log(ctx, strategies), backtest=bt, backtest_curves=curves,
         market=market_snapshot(ctx, ref), ranking=sector_ranking(inp0, ref, views[0]),
-        next_review=next_review(data_date), capital=capital, currency=currency)
+        next_review=next_review(data_date), capital=capital, currency=currency,
+        insiders=insider_context(ctx, views[0], data_date))
 
 
 # ---------------------------------------------------------------------------------------
 # Peces
 # ---------------------------------------------------------------------------------------
+
+
+def insider_context(ctx, view: StrategyView, data_date, days: int = 14) -> dict[str, Any] | None:
+    """Esdeveniments d'insiders recents al S&P 500 i amplitud per sector (només context).
+
+    Les estratègies congelades no fan servir aquesta informació: la senyal està en
+    validació (docs/insiders.md). Si no hi ha dades d'insiders, la secció no apareix.
+    """
+    try:
+        from finance.insiders.evaluation import sector_etfs
+        from finance.insiders.job import read_breadth, read_events
+        ev = read_events(ctx)
+        if ev.empty:
+            return None
+        end = pd.Timestamp(data_date) if data_date is not None else ev["signal_date"].max()
+        recent = ev[(ev["signal_date"] > end - pd.Timedelta(days=days)) & ev["in_sp500"]
+                    & (ev["event"] != "buy")].sort_values("signal_date", ascending=False)
+        br = read_breadth(ctx)
+        etf = sector_etfs(ctx)
+        held = set(view.holdings["actiu"]) if not view.holdings.empty else set()
+        sec = pd.DataFrame()
+        if not br.empty:
+            last = br[br["date"] <= end].dropna(subset=["buy_ratio"]).groupby("scope").tail(1)
+            sec = last.assign(etf=last["scope"].map(etf).fillna(""),
+                              held=last["scope"].map(etf).isin(held))
+            sec = sec.sort_values("buy_ratio", ascending=False)
+        return {"events": recent, "breadth": sec, "days": days}
+    except Exception:  # noqa: BLE001
+        log.exception("context d'insiders no disponible")
+        return None
+
 
 def data_issues(ctx, now: pd.Timestamp, data_date, expected: pd.Timestamp, behind: int) -> list[tuple[str, str]]:
     issues: list[tuple[str, str]] = []
@@ -604,7 +640,40 @@ recalcula mai. "Recalculat vs registre" compara amb el que donaria el mateix mot
 el paper trading acumula història.</p>
 {_table(rep.backtest, bt_fmt)}
 {bt_chart}
+{_insiders_html(rep)}
 </body></html>"""
+
+
+
+def _insiders_html(rep: DailyReport) -> str:
+    ins = rep.insiders
+    if not ins:
+        return ""
+    labels = {"cluster_buy": "compra en grup", "ceo_cfo_buy": "compra CEO/CFO", "cluster_sell": "venda en grup"}
+    ev = ins["events"]
+    if ev.empty:
+        ev_html = f"<p class='muted'>Cap compra en grup, del CEO/CFO ni venda en grup als últims {ins['days']} dies.</p>"
+    else:
+        t = pd.DataFrame({"data": ev["signal_date"].dt.strftime("%Y-%m-%d"), "acció": ev["symbol"],
+                          "sector": ev["sector"], "esdeveniment": ev["event"].map(labels).fillna(ev["event"]),
+                          "insiders": ev["n_insiders"], "import (M$)": ev["value"] / 1e6,
+                          "import / volum diari": ev["value_adv"]})
+        ev_html = _table(t, {"import (M$)": "{:,.2f}", "import / volum diari": "{:.3f}", "insiders": "{:.0f}"})
+    br = ins["breadth"]
+    br_html = ""
+    if not br.empty:
+        b = pd.DataFrame({"àmbit": br["scope"].where(br["scope"] != "market", "Mercat (S&P 500)"),
+                          "ETF": br["etf"], "en cartera": br["held"].map({True: "sí", False: ""}),
+                          "compres": br["buyers"], "vendes": br["sellers"], "ràtio de compres": br["buy_ratio"],
+                          "percentil": br["ratio_pct"]})
+        br_html = _table(b, {"compres": "{:.0f}", "vendes": "{:.0f}", "ràtio de compres": "{:.0%}",
+                             "percentil": "{:.0%}"})
+    return f"""<h2>7. Insiders (context, no modifica les ordres)</h2>
+<p class="muted">Form 4 de la SEC: compres i vendes en mercat obert de consellers i directius, fora de plans
+10b5-1 i d'insiders rutinaris. La senyal està en validació (<code>fin insiders report</code>, docs/insiders.md):
+les estratègies congelades no la fan servir.</p>
+<div class="grid2"><div><h3>Esdeveniments recents al S&amp;P 500</h3><div class="wrap">{ev_html}</div></div>
+<div><h3>Amplitud per sector (63 sessions)</h3><div class="wrap">{br_html}</div></div></div>"""
 
 
 def render_text(rep: DailyReport) -> str:
@@ -628,6 +697,12 @@ def render_text(rep: DailyReport) -> str:
         p = v.perf
         L.append(f"Paper des del {p['inception']:%Y-%m-%d}: {p['ret']:+.2%} (SPY {p['bench_ret']:+.2%}), "
                  f"valor {_money(p['value'], cur)}")
+    ins = rep.insiders
+    if ins and not ins["events"].empty:
+        L += ["", f"## Insiders (últims {ins['days']} dies, només context)"]
+        for r in ins["events"].itertuples():
+            L.append(f"  {r.signal_date:%Y-%m-%d} {r.symbol:<6} {r.event:<13} {r.n_insiders} insiders "
+                     f"{r.value / 1e6:,.2f} M$")
     return "\n".join(L) + "\n"
 
 

@@ -74,7 +74,11 @@ Después:
    (`sudo nano /etc/finance/finance.env`; el fichero es `640 root:<usuario>` y nunca va al
    repositorio). Sin ella, las series revisables (empleo, IPC...) no tienen vintages y los
    backtests macro tendrían look-ahead.
-2. Carga inicial: `sudo systemctl start finance-weekly.service` (universo + metadatos) y
+2. Identifícate ante la SEC para la ingesta de insiders (Form 4) en el mismo fichero →
+   `FIN_SEC_USER_AGENT="Tu Nombre tu@correo.com"`. Sin ella el job `insiders` se omite. La
+   primera carga del histórico (2006 → hoy, ~80 trimestres, ~1 GB de descarga) tarda unos
+   20 minutos: `cd /srv/finance/app && sudo -u <usuario> .venv/bin/fin ingest insiders`.
+3. Carga inicial: `sudo systemctl start finance-weekly.service` (universo + metadatos) y
    luego `sudo systemctl start finance-daily.service` (≈580 instrumentos desde 1990, unos
    minutos).
 
