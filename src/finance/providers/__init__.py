@@ -2,18 +2,28 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 
 from finance.providers.base import (
+    AccountSnapshot,
+    BrokerClient,
+    BrokerFill,
+    BrokerPosition,
+    BrokerQuote,
     ChainSlice,
     FetchResult,
     IndexHistoryProvider,
     InsiderProvider,
     InstrumentProvider,
     MacroProvider,
+    Notifier,
     OptionChainProvider,
+    OrderRequest,
+    OrderState,
     PriceProvider,
     ProviderError,
+    TradableInstrument,
     TransientProviderError,
     UnderlyingQuote,
     UniverseProvider,
@@ -31,10 +41,14 @@ class Providers:
     universe: UniverseProvider
     index_history: IndexHistoryProvider
     insiders: InsiderProvider | None = None
+    # Setmana 11: canals d'alertes i broker (connexió mandrosa: només quan cal operar)
+    notifiers: list[Notifier] = field(default_factory=list)
+    broker: Callable[[], BrokerClient] | None = None
 
 
 def build_providers(settings: Settings) -> Providers:
     from finance.providers.fred import make_fred
+    from finance.providers.notify import build_notifiers
     from finance.providers.sec import DisabledInsiders, SecEdgarInsiders
     from finance.providers.sp500_history import Fja05680History
     from finance.providers.wikipedia import WikipediaIndex
@@ -52,10 +66,23 @@ def build_providers(settings: Settings) -> Providers:
         insiders=(SecEdgarInsiders(settings.sec_user_agent, settings.sec_rate_per_sec)
                   if settings.sec_user_agent and "@" in settings.sec_user_agent
                   else DisabledInsiders("FIN_SEC_USER_AGENT no definit (la SEC exigeix 'Nom correu')")),
+        notifiers=build_notifiers(settings),
+        broker=_broker_factory(settings, yahoo_limiter),
     )
 
 
+def _broker_factory(settings: Settings, limiter: RateLimiter) -> Callable[[], BrokerClient] | None:
+    if settings.exec_mode == "ibkr":
+        def make() -> BrokerClient:
+            from finance.providers.ibkr import IBKRBroker
+            return IBKRBroker(settings)
+        return make
+    return None  # mode manual: el broker és el registre propi (execution/ledger.py)
+
+
 __all__ = [
+    "AccountSnapshot", "BrokerClient", "BrokerFill", "BrokerPosition", "BrokerQuote", "Notifier",
+    "OrderRequest", "OrderState", "TradableInstrument",
     "ChainSlice", "FetchResult", "IndexHistoryProvider", "InsiderProvider", "InstrumentProvider", "MacroProvider", "OptionChainProvider",
     "PriceProvider", "ProviderError", "Providers", "TransientProviderError", "UnderlyingQuote",
     "UniverseProvider", "build_providers",

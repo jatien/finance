@@ -150,3 +150,141 @@ class InsiderProvider(ABC):
     @abstractmethod
     def fetch_filing(self, path: str, accession: str, filing_date: date) -> pd.DataFrame:
         """Operacions d'una presentació concreta (via XML)."""
+
+
+# ---------------------------------------------------------------------------------------
+# Setmana 11: alertes i execució real
+# ---------------------------------------------------------------------------------------
+
+class Notifier(ABC):
+    """Canal d'alertes (ntfy, Telegram, correu...). Llança ProviderError si no es lliura."""
+
+    name: str
+
+    @abstractmethod
+    def send(self, title: str, body: str, level: str = "info") -> None: ...
+
+
+@dataclass(frozen=True)
+class TradableInstrument:
+    """Instrument que s'opera de veritat per a una sèrie del senyal (p. ex. XLK → ZPDT a Xetra)."""
+    symbol: str  # sèrie del senyal (ETF dels EUA)
+    ticker: str  # ticker a la plaça d'execució
+    isin: str
+    currency: str = "EUR"
+    name: str = ""
+
+
+@dataclass
+class BrokerPosition:
+    ticker: str
+    quantity: float
+    avg_cost: float | None = None
+    isin: str | None = None
+    currency: str | None = None
+
+
+@dataclass
+class AccountSnapshot:
+    account: str
+    is_paper: bool
+    currency: str
+    net_liquidation: float
+    cash: float
+    available: float  # efectiu disponible per comprar (sense marge)
+    positions: list[BrokerPosition] = field(default_factory=list)
+
+
+@dataclass
+class BrokerQuote:
+    ticker: str
+    bid: float | None = None
+    ask: float | None = None
+    last: float | None = None
+    close: float | None = None
+    ts: pd.Timestamp | None = None
+
+    @property
+    def ref(self) -> float | None:
+        """Preu de referència: punt mig si hi ha bid/ask vàlids, si no l'últim, si no el tancament."""
+        def ok(x):
+            return x is not None and x == x and x > 0
+        if ok(self.bid) and ok(self.ask) and self.ask >= self.bid:
+            return (self.bid + self.ask) / 2
+        for x in (self.last, self.close):
+            if ok(x):
+                return float(x)
+        return None
+
+
+@dataclass(frozen=True)
+class OrderRequest:
+    ref: str  # identificador propi (orderRef): idempotència entre execucions
+    instrument: TradableInstrument
+    side: str  # BUY | SELL
+    quantity: int
+    limit_price: float
+    tif: str = "DAY"
+
+
+@dataclass
+class OrderState:
+    ref: str
+    status: str  # submitted | filled | partial | cancelled | rejected | expired
+    broker_order_id: str | None = None
+    filled_qty: float = 0.0
+    avg_price: float | None = None
+    message: str = ""
+
+    @property
+    def active(self) -> bool:
+        return self.status in ("submitted", "partial")
+
+
+@dataclass
+class BrokerFill:
+    exec_id: str
+    ref: str | None
+    ticker: str
+    side: str  # BUY | SELL
+    quantity: float
+    price: float
+    commission: float | None
+    currency: str | None
+    time: pd.Timestamp
+    isin: str | None = None
+
+
+class BrokerClient(ABC):
+    """Interfície del broker. La implementació real és IBKR (`providers/ibkr.py`); els tests
+    fan servir un broker simulat. El codi d'execució només coneix aquesta interfície."""
+
+    name: str
+    can_submit: bool = True  # False = mode manual: el pla s'executa a mà
+
+    @abstractmethod
+    def account(self) -> AccountSnapshot: ...
+
+    @abstractmethod
+    def quotes(self, instruments: list[TradableInstrument]) -> dict[str, BrokerQuote]:
+        """Cotització per ticker (pot faltar si no n'hi ha)."""
+
+    @abstractmethod
+    def place(self, req: OrderRequest) -> OrderState: ...
+
+    @abstractmethod
+    def orders(self) -> dict[str, OrderState]:
+        """Estat de les ordres d'avui conegudes pel broker, per `ref` (només les pròpies)."""
+
+    @abstractmethod
+    def cancel(self, ref: str) -> None: ...
+
+    @abstractmethod
+    def fills(self, since: pd.Timestamp | None = None) -> list[BrokerFill]: ...
+
+    def wait(self, seconds: float) -> None:
+        import time
+        time.sleep(seconds)
+
+    def close(self) -> None:  # noqa: B027 — opcional
+        pass

@@ -621,6 +621,152 @@ INSIDER_BREADTH = DatasetSpec(
     pk_unique_per_ingest=True,
 )
 
+# ---------------------------------------------------------------------------------------
+# Setmana 11: execució real i alertes
+# ---------------------------------------------------------------------------------------
+# Els plans i les ordres canvien d'estat (planificat → aprovat → enviat → executat): cada
+# canvi s'escriu com una fila nova amb la mateixa clau i `updated_at` posterior; la vista es
+# queda amb l'última. L'historial complet d'estats queda al lake (auditoria).
+
+EXEC_PLANS = DatasetSpec(
+    name="exec_plans",
+    path="exec/plans",
+    description=(
+        "Plans d'execució real: una fila per pla (estratègia × sessió d'execució). `status`: "
+        "planned | awaiting_approval | approved | submitted | done | partial | expired | "
+        "rejected | blocked | no_trade. `blockers` explica per què no es pot executar."
+    ),
+    fields=[
+        pa.field("plan_id", pa.string(), nullable=False),
+        pa.field("strategy_set", pa.string(), nullable=False),
+        pa.field("decision_date", pa.date32(), nullable=False),  # tancament amb què es decideix
+        pa.field("session", pa.date32(), nullable=False),  # sessió (Xetra) en què s'executa
+        pa.field("mode", pa.string(), nullable=False),  # manual | ibkr
+        pa.field("account", pa.string()),
+        pa.field("is_paper_account", pa.bool_()),
+        pa.field("status", pa.string(), nullable=False),
+        pa.field("reason", pa.string()),
+        pa.field("blockers", pa.string()),
+        pa.field("notes", pa.string()),
+        pa.field("currency", pa.string()),
+        pa.field("net_liquidation", pa.float64()),
+        pa.field("managed_value", pa.float64()),
+        pa.field("cash", pa.float64()),
+        pa.field("max_deviation", pa.float64()),  # màx |pes real - objectiu| abans d'operar
+        pa.field("turnover", pa.float64()),  # Σ|import| / valor gestionat
+        pa.field("requires_approval", pa.bool_(), nullable=False),
+        pa.field("approved_at", UTC_TS),
+        pa.field("created_at", UTC_TS, nullable=False),
+        pa.field("updated_at", UTC_TS, nullable=False),
+    ],
+    primary_key=("plan_id",),
+    sort_by=("created_at",),
+    dedup_order=("updated_at",),
+)
+
+EXEC_ORDERS = DatasetSpec(
+    name="exec_orders",
+    path="exec/orders",
+    description=(
+        "Ordres de cada pla. `symbol` = sèrie del senyal (ETF dels EUA); `ticker`/`isin` = "
+        "instrument operat (UCITS). `status`: planned | submitted | filled | partial | "
+        "cancelled | rejected | expired | skipped. `ref` = orderRef enviat al broker."
+    ),
+    fields=[
+        pa.field("plan_id", pa.string(), nullable=False),
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("ref", pa.string(), nullable=False),
+        pa.field("ticker", pa.string(), nullable=False),
+        pa.field("isin", pa.string()),
+        pa.field("side", pa.string(), nullable=False),  # BUY | SELL
+        pa.field("quantity", pa.float64(), nullable=False),
+        pa.field("current_weight", pa.float64()),
+        pa.field("target_weight", pa.float64()),
+        pa.field("ref_price", pa.float64()),  # preu de referència en planificar
+        pa.field("limit_price", pa.float64()),
+        pa.field("status", pa.string(), nullable=False),
+        pa.field("broker_order_id", pa.string()),
+        pa.field("filled_qty", pa.float64()),
+        pa.field("avg_price", pa.float64()),
+        pa.field("commission", pa.float64()),
+        pa.field("slippage_bps", pa.float64()),  # (preu mitjà vs ref) en contra = positiu
+        pa.field("message", pa.string()),
+        pa.field("updated_at", UTC_TS, nullable=False),
+    ],
+    primary_key=("plan_id", "symbol"),
+    sort_by=("plan_id", "symbol"),
+    dedup_order=("updated_at",),
+)
+
+EXEC_FILLS = DatasetSpec(
+    name="exec_fills",
+    path="exec/fills",
+    description=(
+        "Execucions reals (del broker o apuntades a mà) i moviments d'efectiu. `side`: BUY | "
+        "SELL | DEPOSIT | WITHDRAWAL. Per als moviments d'efectiu, `quantity` = import."
+    ),
+    fields=[
+        pa.field("exec_id", pa.string(), nullable=False),
+        pa.field("exec_time", UTC_TS, nullable=False),
+        pa.field("plan_id", pa.string()),
+        pa.field("ref", pa.string()),
+        pa.field("symbol", pa.string()),
+        pa.field("ticker", pa.string(), nullable=False),
+        pa.field("isin", pa.string()),
+        pa.field("side", pa.string(), nullable=False),
+        pa.field("quantity", pa.float64(), nullable=False),
+        pa.field("price", pa.float64(), nullable=False),
+        pa.field("commission", pa.float64()),
+        pa.field("currency", pa.string()),
+        pa.field("origin", pa.string(), nullable=False),  # broker | manual
+        pa.field("year", pa.int16(), nullable=False),
+    ],
+    primary_key=("exec_id",),
+    partition=Partition("year", derive=_year_from("exec_time")),
+    sort_by=("exec_time",),
+)
+
+EXEC_ACCOUNT = DatasetSpec(
+    name="exec_account",
+    path="exec/account",
+    description="Foto diària del compte real: valor, efectiu i posicions (JSON), per comparar amb el paper.",
+    fields=[
+        pa.field("account", pa.string(), nullable=False),
+        pa.field("date", pa.date32(), nullable=False),
+        pa.field("currency", pa.string()),
+        pa.field("net_liquidation", pa.float64(), nullable=False),
+        pa.field("cash", pa.float64()),
+        pa.field("net_flows", pa.float64()),  # aportacions - retirades del dia
+        pa.field("positions", pa.string()),  # JSON {ticker: quantitat}
+        pa.field("snapshot_at", UTC_TS, nullable=False),
+    ],
+    primary_key=("account", "date"),
+    sort_by=("account", "date"),
+    dedup_order=("snapshot_at",),
+)
+
+ALERTS_SENT = DatasetSpec(
+    name="alerts_sent",
+    path="_meta/alerts",
+    description=(
+        "Alertes enviades. `alert_key` identifica l'esdeveniment (no es torna a enviar si ja "
+        "s'ha lliurat bé per algun canal). `delivered` = canals que han funcionat."
+    ),
+    fields=[
+        pa.field("alert_key", pa.string(), nullable=False),
+        pa.field("level", pa.string(), nullable=False),  # info | important | critical
+        pa.field("title", pa.string(), nullable=False),
+        pa.field("body", pa.string()),
+        pa.field("delivered", pa.string()),  # canals separats per comes
+        pa.field("failed", pa.string()),  # canal: error
+        pa.field("ok", pa.bool_(), nullable=False),
+        pa.field("sent_at", UTC_TS, nullable=False),
+    ],
+    primary_key=("alert_key",),
+    sort_by=("sent_at",),
+    dedup_order=("sent_at",),
+)
+
 REGISTRY: dict[str, DatasetSpec] = {
     s.name: s
     for s in (
@@ -628,7 +774,7 @@ REGISTRY: dict[str, DatasetSpec] = {
         UNIVERSE_MEMBERSHIP, INDEX_CHANGES, UNIVERSE_INTERVALS, INSTRUMENTS, INGEST_RUNS,
         DQ_RESULTS, FEATURES_DAILY, SECTOR_FEATURES_DAILY, REGIMES_DAILY, PORTFOLIO_TARGETS,
         PAPER_BOOK, PAPER_NAV, INSIDER_TRANSACTIONS, INSIDER_EVENTS,
-        INSIDER_BREADTH,
+        INSIDER_BREADTH, EXEC_PLANS, EXEC_ORDERS, EXEC_FILLS, EXEC_ACCOUNT, ALERTS_SENT,
     )
 }
 

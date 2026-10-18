@@ -1,0 +1,27 @@
+# IB Gateway en Docker (imatge gnzsnz/ib-gateway) per a l'execució real (docs/ejecucion.md).
+#
+#   cd /srv/finance/app/deploy/ibgateway
+#   cp ibgateway.env.example /etc/finance/ibgateway.env && chmod 600 /etc/finance/ibgateway.env
+#   docker compose --env-file /etc/finance/ibgateway.env up -d
+#
+# Els ports només escolten a 127.0.0.1: l'API d'IB no xifra ni autentica. Des del portàtil,
+# túnel SSH (ssh -L 4002:127.0.0.1:4002 finance), mai obrir-los a la xarxa.
+# Comprova a la documentació de la imatge el mapeig de ports de la versió que facis servir.
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: always
+    environment:
+      TWS_USERID: ${TWS_USERID}
+      TWS_PASSWORD: ${TWS_PASSWORD}
+      TRADING_MODE: ${TRADING_MODE:-paper}
+      READ_ONLY_API: ${READ_ONLY_API:-no}
+      TWOFA_TIMEOUT_ACTION: ${TWOFA_TIMEOUT_ACTION:-restart}
+      AUTO_RESTART_TIME: ${AUTO_RESTART_TIME:-11:59 PM}
+      RELOGIN_AFTER_2FA_TIMEOUT: ${RELOGIN_AFTER_2FA_TIMEOUT:-yes}
+      TIME_ZONE: ${TIME_ZONE:-Europe/Madrid}
+      VNC_SERVER_PASSWORD: ${VNC_SERVER_PASSWORD:-}
+    ports:
+      - "127.0.0.1:4001:4001"   # compte real
+      - "127.0.0.1:4002:4002"   # compte paper
+      - "127.0.0.1:5900:5900"   # VNC (només si VNC_SERVER_PASSWORD), per túnel SSH

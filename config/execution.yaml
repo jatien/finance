@@ -1,0 +1,17 @@
+# Instruments que s'operen de veritat per a cada sèrie del senyal (setmana 11).
+#
+# Per defecte: els equivalents UCITS de src/finance/fiscal/config.py (UCITS_MAP), que
+# repliquen el mateix índex i cotitzen a Xetra en EUR. Un minorista de la UE no pot comprar
+# els ETF dels EUA (PRIIPs/KID).
+#
+# Un símbol sense ticker o sense ISIN NO es pot operar: si l'objectiu hi té pes, el pla queda
+# bloquejat i rebràs una alerta. Verifica l'ISIN a IBKR (cerca del contracte) i afegeix-lo aquí.
+# També pots substituir un instrument sencer (p. ex. un altre UCITS de bons).
+
+currency: EUR
+# Cotització de referència en mode manual (Yahoo, sufix de Xetra)
+yahoo_suffix: ".DE"
+
+instruments: {}
+#  XLF: {ticker: ZPDF, isin: IE00...}           # completa l'ISIN un cop verificat
+#  IEF: {ticker: ..., isin: ..., name: "..."}    # bons del Tresor 7-10 anys (UCITS)

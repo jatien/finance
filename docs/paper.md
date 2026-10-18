@@ -101,11 +101,7 @@ corra `fin run daily` allí, con su propia fecha de inicio.
 
 ## Qué falta (no incluido a propósito)
 
-- **Ejecuciones reales**: el registro supone que se opera al cierre al precio de cierre. Si
-  se empieza a operar de verdad, conviene apuntar las ejecuciones reales para medir el
-  *slippage* frente al paper.
-- **Avisos activos** (correo, ntfy, Telegram): hoy el informe se consulta. Es lo siguiente
-  natural para la capa 6.
+- ~~Ejecuciones reales y avisos activos~~: hechos en la semana 11, ver [ejecucion.md](ejecucion.md).
 - **Decidir con el paper trading**: con 1–2 operaciones al mes, hacen falta muchos meses
   para que la diferencia entre `rot_v1b` y `rot_v2` sea significativa. Antes de eso, el valor
   del paper trading es comprobar que la operativa funciona (datos, órdenes, costes), no
